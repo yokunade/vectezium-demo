@@ -1,0 +1,37 @@
+Vectezium is a modified version of Vector (https://github.com/vectordotdev/vector), built from
+Vector v0.60.0 (commit 0d0b35865036f8b5c2f0104d9744fa84985ffff1) with mysql_cdc.patch applied.
+
+Modifications copyright (c) 2026 yokunade.
+
+Vector and the modifications in mysql_cdc.patch are licensed under the Mozilla Public License,
+version 2.0 (MPL-2.0); see LICENSE. The Source Code Form of this modified version is the Vector
+source at the commit above plus mysql_cdc.patch, published at
+https://github.com/yokunade/Vectezium. A built image carries copies of this notice and the
+patch in /usr/share/doc/vectezium/.
+
+The third-party Rust crates compiled into Vectezium, and their licences, are listed in Vector's
+LICENSE-3rdparty.csv; LICENSE-3rdparty-mysql_cdc.csv lists the crates the patch adds.
+
+Vector's NOTICE follows.
+
+--------------------------------------------------------------------------------------------------
+
+Unless explicitly stated otherwise all files in this repository are licensed under the Mozilla
+Public License, version 2.0 (MPL-2.0).
+
+This product includes software developed at Datadog (https://www.datadoghq.com/)
+
+   Copyright (c) 2020 Vector Authors <vector@datadoghq.com>
+
+   ADDITIONAL NOTICES FOR DISTRIBUTIONS IN OBJECT FORM
+
+   1. This product includes software developed by the OpenSSL Project for
+      use in the OpenSSL Toolkit (https://www.openssl.org/).
+
+   2. This product includes cryptographic software written by Eric Young
+      (eay@cryptsoft.com).
+
+   ADDITIONAL NOTICES FOR DISTRIBUTIONS IN OBJECT FORM FOR WINDOWS
+
+   1. This product includes software written by Tim Hudson
+      (tjh@cryptsoft.com).

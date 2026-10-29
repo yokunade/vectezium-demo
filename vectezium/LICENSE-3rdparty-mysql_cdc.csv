@@ -1,0 +1,6 @@
+Component,Origin,License,Copyright
+btoi,https://github.com/niklasf/rust-btoi,MIT OR Apache-2.0,Niklas Fiekas <niklas.fiekas@backscattering.de>
+keyed_priority_queue,https://github.com/AngelicosPhosphoros/keyed_priority_queue,MIT,AngelicosPhosphoros <xuzin.timur@gmail.com>
+mysql_async,https://github.com/blackbeam/mysql_async,MIT OR Apache-2.0,blackbeam <aikorsky@gmail.com>
+mysql_common,https://github.com/blackbeam/rust_mysql_common,MIT OR Apache-2.0,blackbeam <aikorsky@gmail.com>
+saturating,https://github.com/breeswish/saturating-rs,MIT,Breezewish <me@breeswish.org>

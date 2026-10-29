@@ -1,0 +1,190 @@
+# Vectezium config for the demo connector `shop`.
+#
+# This is the config a real deployment runs for a connector (one MySQL server -> one folder in a
+# storage account), with these demo changes:
+#   - storage is Azurite, reached with its well-known connection string, instead of a real storage
+#     account reached with a managed identity
+#   - rows land in the lake after at most 10 seconds instead of 5 minutes (rows.batch.timeout_secs)
+#   - TLS to MySQL is off (the demo server only has a self-signed certificate)
+#   - one extra sink, `live`: every event also goes to a local file that the UI tails
+#
+# Lake layout (container `raw`):
+#   cdc/shop/<db>/<table>/date=YYYY-MM-DD/<uuid>.json.gz   row changes: c, r, u, d (ordered by seq)
+#   cdc/shop/_control/date=YYYY-MM-DD/<uuid>.json.gz       schema_change, truncate, snapshot_completed
+#   cdc/shop/_schemas/<db>/<table>/<schema_version>.json   one document per table definition
+#   cdc/shop/_offsets/latest.json                          the published commit point
+#   cdc/shop/_offsets/history/date=YYYY-MM-DD/<uuid>.json  every published commit point
+#   cdc/shop/_lock                                         the single-writer lease
+data_dir: /var/lib/vectezium
+
+acknowledgements:
+  enabled: true
+
+# The MySQL password: a file in /run/secrets (a Docker secret here, a Key Vault secret in Azure).
+secret:
+  kv:
+    type: directory
+    path: /run/secrets
+    remove_trailing_whitespace: true
+
+sources:
+  mysql:
+    type: mysql_cdc
+    hostname: mysql
+    port: 3306
+    user: vectezium
+    password: SECRET[kv.mysql-password]
+    ssl_mode: disabled
+    server_id: 184101                 # replica id: unique among the server's replicas
+    topic_prefix: shop                # the connector name: metadata.server_name
+    database_include_list: ["shop"]
+    # Captured tables (regular expressions on <db>.<table>).
+    table_include_list:
+      - 'shop\.customers'
+      - 'shop\.products'
+      - 'shop\.orders'
+      - 'shop\.order_items'
+      - 'shop\.reviews'   # added by scripts/add-table.sh
+      # scripts/add-table.sh adds tables above this line
+    column_exclude_list: ['shop\.customers\.password_hash']
+    snapshot_mode: when_needed        # snapshot on first start (and if the binlog was purged)
+    snapshot_strategy: incremental    # snapshot in chunks while streaming: no long locks
+    incremental_snapshot_chunk_size: 250   # small chunks, so the demo shows several per table
+    snapshot_new_tables: true         # snapshot tables that become captured later
+    # Snapshots nobody asked for (all tables after a purged binlog; tables whose snapshot state
+    # was lost) wait for an operator: see scripts/snapshot.sh.
+    unplanned_snapshots: hold
+    snapshot_locking_mode: none
+    decimal_handling_mode: string
+    event_format: record
+    record_images: before_and_after   # record = {"before": …, "after": …}: both row images
+    include_table_schemas: true
+    include_schema_changes: true
+    observe_output: true              # unacknowledged copies for the UI's live view (sink `live`)
+    offset_publish_interval_secs: 5
+    publish_offsets: true
+    single_writer_lock:
+      connection_string: &azurite "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+      container_name: raw
+      blob_name: cdc/shop/_lock
+      lease_duration_secs: 30
+    # Without a stored offset (data directory lost), resume from the last published offset in
+    # the lake. Starts from scratch only if cdc/shop/ holds nothing but the lock.
+    offset_recovery:
+      latest_blob: cdc/shop/_offsets/latest.json
+      folder: cdc/shop/
+      control_prefix: cdc/shop/_control/
+
+sinks:
+  # Row changes (c, r, u, d) per table, ordered by metadata.seq.
+  rows:
+    type: azure_blob
+    inputs: ["mysql"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop/{{ metadata.db }}/{{ metadata.table }}/date=%Y-%m-%d/"
+    blob_append_uuid: true
+    blob_extension: json.gz
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: gzip
+    batch:
+      max_bytes: 100000000
+      timeout_secs: 10
+
+  # schema_change, truncate, snapshot_completed.
+  control:
+    type: azure_blob
+    inputs: ["mysql.control"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop/_control/date=%Y-%m-%d/"
+    blob_append_uuid: true
+    blob_extension: json.gz
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: gzip
+    batch:
+      timeout_secs: 10
+
+  # One document per table definition (re-emitted documents overwrite their own file).
+  table_schemas:
+    type: azure_blob
+    inputs: ["mysql.table_schemas"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop/_schemas/{{ db }}/{{ table }}/{{ schema_version }}"
+    blob_time_format: ""
+    blob_append_uuid: false
+    blob_overwrite: true
+    blob_extension: json
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: none
+    batch:
+      timeout_secs: 10
+
+  # Published commit points: every event with seq <= the published seq is in the lake.
+  offsets_history:
+    type: azure_blob
+    inputs: ["mysql.offsets"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop/_offsets/history/date=%Y-%m-%d/"
+    blob_append_uuid: true
+    blob_extension: json
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: none
+    batch:
+      timeout_secs: 10
+
+  offsets_latest:
+    type: azure_blob
+    inputs: ["mysql.offsets"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop/_offsets/latest"
+    blob_time_format: ""
+    blob_append_uuid: false
+    blob_overwrite: true
+    blob_extension: json
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: none
+    batch:
+      max_events: 1
+      timeout_secs: 1
+
+  # Demo only: every event, as soon as it is captured, for the UI's live view. It reads the
+  # `observe` output, which carries unacknowledged copies, so this sink can never hold back or
+  # stop capture: if it is slow, fails or is gone, only the live view misses events. The lake
+  # still gets them all. The UI keeps the file small by trimming it in place (ui/app.py).
+  live:
+    type: file
+    inputs: ["mysql.observe", "mysql.offsets"]   # published offsets are not acknowledged either
+    path: /var/log/vectezium/live.ndjson
+    encoding:
+      codec: json
+      except_fields: ["source_type"]
+    # Drop rather than wait when the file falls behind, so the source never waits to hand
+    # copies over. Sized in bytes: rows with large columns would make an event count unbounded.
+    buffer:
+      type: memory
+      max_size: 33554432              # 32 MiB
+      when_full: drop_newest

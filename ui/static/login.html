@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Vectezium</title>
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%2306b6d4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M9 11l7 11 7-11' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    // Same theme preference as the main UI, applied before the first paint.
+    (function () {
+      var pref = "system";
+      try { pref = localStorage.getItem("theme") || "system"; } catch (e) {}
+      var dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      document.documentElement.dataset.themePref = pref;
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/login.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="brand-gradient" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/>
+      </linearGradient>
+    </defs>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.9 4.2A10 10 0 0 1 12 4c6.4 0 10 8 10 8a17 17 0 0 1-2.2 3.2"/><path d="M6.6 6.6A17 17 0 0 0 2 12s3.6 8 10 8a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m2 2 20 20"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></symbol>
+  </svg>
+
+  <!-- The hero: a live sketch of the pipeline, events flowing from the binlog into the lake. -->
+  <div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <div class="layout">
+    <section class="hero" aria-hidden="true">
+      <div class="hero-brand">
+        <svg class="logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="url(#brand-gradient)"/><path d="M9 11l7 11 7-11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Vectezium</span>
+      </div>
+
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="live-dot"></span>Change data capture, without Kafka</p>
+        <h1>Every row change,<br><span class="gradient-text">straight to the lake.</span></h1>
+        <p class="lede">Vectezium reads the MySQL binlog and lands each insert, update and delete in your
+          Azure landing zone as it commits.</p>
+      </div>
+
+      <div class="stage">
+        <canvas id="flow"></canvas>
+        <div class="node n-src"><div class="node-icon"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg></div><b>MySQL</b><small>binlog</small></div>
+        <div class="node n-vtz"><div class="node-icon brand"><svg viewBox="0 0 32 32"><path d="M9 11l7 11 7-11" stroke-width="3.2"/></svg></div><b>Vectezium</b><small id="batch-label">batching</small></div>
+        <div class="node n-lake"><div class="node-icon"><svg viewBox="0 0 24 24"><path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg></div><b>Lake</b><small id="files-label">0 files</small></div>
+      </div>
+
+      <div class="ticker" id="ticker"></div>
+    </section>
+
+    <main class="panel-wrap">
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Theme"><svg class="i"><use href="#i-monitor"/></svg></button>
+
+      <div class="card" id="card">
+        <div class="card-glow" aria-hidden="true"></div>
+
+        <!-- Step 1: sign in -->
+        <form id="step-login" class="step active" novalidate autocomplete="on">
+          <div class="mobile-brand">
+            <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="url(#brand-gradient)"/><path d="M9 11l7 11 7-11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Vectezium</span>
+          </div>
+          <h2>Welcome back</h2>
+          <p class="sub">Sign in to watch changes stream into the lake.</p>
+
+          <div class="alert" id="login-error" role="alert" hidden><svg class="i"><use href="#i-alert"/></svg><span></span></div>
+
+          <label class="field">
+            <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder=" " required>
+            <span class="label">Username</span>
+            <svg class="i lead"><use href="#i-user"/></svg>
+          </label>
+          <label class="field">
+            <input id="password" name="password" type="password" autocomplete="current-password" placeholder=" " required>
+            <span class="label">Password</span>
+            <svg class="i lead"><use href="#i-lock"/></svg>
+            <button type="button" class="reveal" aria-label="Show password" data-for="password"><svg class="i"><use href="#i-eye"/></svg></button>
+          </label>
+          <p class="caps" hidden>Caps Lock is on</p>
+
+          <button class="submit" type="submit">
+            <span class="submit-text">Sign in</span><svg class="i"><use href="#i-arrow"/></svg>
+            <span class="spinner" aria-hidden="true"></span>
+          </button>
+
+          <p class="hint" id="first-run-hint" hidden>First time here? Sign in as <code>admin</code> / <code>admin</code>; you'll choose your own password next.</p>
+        </form>
+
+        <!-- Step 2: choose a new password (required at first sign-in) -->
+        <form id="step-change" class="step" novalidate>
+          <div class="step-badge"><svg class="i"><use href="#i-shield"/></svg></div>
+          <h2>Make it yours</h2>
+          <p class="sub">You're signed in with the default password. Choose a new one to continue.</p>
+
+          <div class="alert" id="change-error" role="alert" hidden><svg class="i"><use href="#i-alert"/></svg><span></span></div>
+
+          <input type="text" name="username" autocomplete="username" id="change-username" hidden>
+          <label class="field" id="current-field" hidden>
+            <input id="current-password" type="password" autocomplete="current-password" placeholder=" ">
+            <span class="label">Current password</span>
+            <svg class="i lead"><use href="#i-lock"/></svg>
+          </label>
+          <label class="field">
+            <input id="new-password" type="password" autocomplete="new-password" placeholder=" " required minlength="8">
+            <span class="label">New password</span>
+            <svg class="i lead"><use href="#i-key"/></svg>
+            <button type="button" class="reveal" aria-label="Show password" data-for="new-password"><svg class="i"><use href="#i-eye"/></svg></button>
+          </label>
+
+          <div class="meter" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div class="meter-label" id="meter-label" aria-live="polite">&nbsp;</div>
+
+          <label class="field">
+            <input id="confirm-password" type="password" autocomplete="new-password" placeholder=" " required>
+            <span class="label">Confirm new password</span>
+            <svg class="i lead"><use href="#i-lock"/></svg>
+          </label>
+
+          <ul class="rules" id="rules">
+            <li data-rule="length"><svg class="i"><use href="#i-check"/></svg>At least 8 characters</li>
+            <li data-rule="mix"><svg class="i"><use href="#i-check"/></svg>Letters and a number or symbol</li>
+            <li data-rule="fresh"><svg class="i"><use href="#i-check"/></svg>Not the default password</li>
+            <li data-rule="match"><svg class="i"><use href="#i-check"/></svg>Both passwords match</li>
+          </ul>
+
+          <button class="submit" type="submit" disabled>
+            <span class="submit-text">Save and continue</span><svg class="i"><use href="#i-arrow"/></svg>
+            <span class="spinner" aria-hidden="true"></span>
+          </button>
+          <button class="link" type="button" id="change-cancel">Sign out instead</button>
+        </form>
+
+        <!-- Step 3: done -->
+        <div id="step-done" class="step" role="status">
+          <svg class="done-mark" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="24"/><path d="M15 27l7 7 15-15"/></svg>
+          <h2 id="done-title">You're in</h2>
+          <p class="sub">Opening the live stream…</p>
+        </div>
+      </div>
+
+      <p class="foot">Local demo · MySQL → Vectezium → Azurite</p>
+    </main>
+  </div>
+
+  <script src="/static/login.js"></script>
+</body>
+</html>

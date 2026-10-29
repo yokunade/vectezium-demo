@@ -1,0 +1,118 @@
+# Vectezium demo: MySQL 8.4 (seeded `shop` database) -> Vectezium -> Azurite (local Azure Storage
+# emulator standing in for ADLS), plus a web UI on http://localhost:8080.
+#
+#   docker compose up -d --build      first build compiles Vectezium from source (10-30 minutes)
+#   docker compose down -v            stop and delete all data (or ./scripts/reset.sh)
+name: vectezium-demo
+
+x-azurite-connection: &azurite-connection "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+
+services:
+  # The source database, configured the way CDC needs it: row-based binlog with full row images
+  # and full metadata, and GTIDs (required for incremental snapshots).
+  mysql:
+    image: mysql:8.4.13@sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
+      - --binlog-row-metadata=FULL
+      - --gtid-mode=ON
+      - --enforce-gtid-consistency=ON
+    environment:
+      MYSQL_ROOT_PASSWORD: root-demo-pw
+    ports:
+      - "3307:3306"                   # for your own MySQL client: localhost:3307, user app
+    volumes:
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot-demo-pw"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  # The lake: Azurite's Blob service. Vectezium writes with the Blob API, which ADLS Gen2 accounts
+  # also serve, so the files and paths are the same as on a real account.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
+    command: azurite-blob --blobHost 0.0.0.0 --location /data --loose --skipApiVersionCheck
+    ports:
+      - "10000:10000"                 # for Azure Storage Explorer: "Local storage emulator"
+    volumes:
+      - azurite-data:/data
+
+  # Creates the `raw` container, which (as on a real storage account) must exist before Vectezium starts.
+  storage-init:
+    build: ./ui
+    image: vectezium-demo/ui:local
+    command: ["python", "init_storage.py"]
+    environment:
+      AZURE_STORAGE_CONNECTION_STRING: *azurite-connection
+    depends_on:
+      - azurite
+    restart: "no"
+
+  vectezium:
+    build: ./vectezium
+    image: vectezium-demo/vectezium:local
+    command: ["--config", "/etc/vectezium/vectezium.yaml"]
+    volumes:
+      - ./vectezium/vectezium.yaml:/etc/vectezium/vectezium.yaml:ro
+      - vectezium-data:/var/lib/vectezium    # offsets.json: where to resume
+      - events:/var/log/vectezium            # live.ndjson, read by the UI
+    secrets:
+      - mysql-password
+    depends_on:
+      mysql:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # On stop, Vectezium stores its last acknowledged offset and releases the lock.
+    stop_grace_period: 60s
+
+  ui:
+    build: ./ui
+    image: vectezium-demo/ui:local
+    user: "65532:65532"               # the owner of live.ndjson, which the UI trims
+    ports:
+      - "8080:8080"
+    environment:
+      AZURE_STORAGE_CONNECTION_STRING: *azurite-connection
+      MYSQL_HOST: mysql
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app-demo-pw
+    volumes:
+      - ui-data:/data                 # auth.db: UI users and sessions
+      - events:/events                # read and trimmed in place (it would grow forever otherwise)
+      # The licence files, shown in the Licences tab.
+      - ./LICENSE:/licences/LICENSE:ro
+      - ./vectezium/NOTICE:/licences/NOTICE:ro
+      - ./vectezium/LICENSE-3rdparty-mysql_cdc.csv:/licences/LICENSE-3rdparty-mysql_cdc.csv:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      azurite:
+        condition: service_started
+
+  # Used by scripts/snapshot.sh to edit Vectezium's offset file while it is stopped.
+  tools:
+    build: ./ui
+    image: vectezium-demo/ui:local
+    profiles: ["tools"]
+    user: "65532:65532"               # the owner of Vectezium's files
+    volumes:
+      - vectezium-data:/data
+
+secrets:
+  mysql-password:
+    file: ./vectezium/mysql-password
+
+volumes:
+  mysql-data:
+  azurite-data:
+  vectezium-data:
+  events:
+  ui-data:
