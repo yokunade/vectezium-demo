@@ -9,7 +9,7 @@ for either connector: `shop` (MySQL) or `shop_pg` (PostgreSQL).
   /api/lake/blob       one blob's content (gunzipped), parsed as NDJSON
   /api/db/tables       the source database's captured schema: its tables and their row counts
   /api/db/rows         the first rows of one table
-  /api/licences        Vectezium's licence, notice and the crates its patches add
+  /api/licences        Vectezium's licence, notice and the crates its CDC sources add
   /api/auth/*          sign-in, password change and sign-out (auth.py)
 
 The connector endpoints take `connector`: `mysql` (the default) or `postgres`. Everything except
@@ -460,12 +460,12 @@ def db_rows(table: str, limit: int = 100, connector: str = "mysql"):
 
 @app.get("/api/licences")
 def licences():
-    """The files in vectezium/: the MPL-2.0 text, the NOTICE and the crates the patch adds."""
+    """The files in vectezium/: the MPL-2.0 text, the NOTICE and the crates the CDC sources add."""
     def read(name):
         try:
             return (LICENCES / name).read_text(encoding="utf-8")
         except FileNotFoundError:
             return None
-    crates = read("LICENSE-3rdparty-mysql_cdc.csv")
+    crates = read("LICENSE-3rdparty-cdc.csv")
     return {"notice": read("NOTICE"), "license": read("LICENSE"),
             "crates": list(csv.DictReader(crates.splitlines())) if crates else []}

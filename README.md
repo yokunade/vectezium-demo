@@ -3,10 +3,10 @@
 **Vectezium** is [Vector](https://vector.dev) with change data capture (CDC) sources for MySQL
 and PostgreSQL: it reads the MySQL binlog or a PostgreSQL logical replication slot and writes
 every insert, update and delete straight into an Azure Data Lake landing zone, in the style of
-[Debezium](https://debezium.io) but without Kafka or Kafka Connect. It is two patches to Vector
-v0.60.0, applied in order: [`vectezium/mysql_cdc.patch`](vectezium/mysql_cdc.patch) (the MySQL
-source and the shared CDC core) and [`vectezium/postgres_cdc.patch`](vectezium/postgres_cdc.patch)
-(the PostgreSQL source).
+[Debezium](https://debezium.io) but without Kafka or Kafka Connect. It is a fork of Vector
+v0.60.0: the `vectezium` branch of [yokunade/Vectezium](https://github.com/yokunade/Vectezium),
+where `git log 0d0b358..vectezium` shows each change (the shared CDC core, the MySQL source, the
+PostgreSQL source) as its own commit.
 
 This repository is a local, self-contained demo of it. One `docker compose up` starts:
 
@@ -14,7 +14,7 @@ This repository is a local, self-contained demo of it. One `docker compose up` s
   for CDC: row-based binlog, full row images and metadata, GTIDs
 - **PostgreSQL 17** with the same shop (customers, products, orders) in schema `public`, set up
   for logical replication: `wal_level=logical`, a publication, `REPLICA IDENTITY FULL`
-- **Vectezium**, built from source: Vector v0.60.0 with both patches applied
+- **Vectezium**, built from source at the fork commit pinned in [`vectezium/Dockerfile`](vectezium/Dockerfile)
 - **Azurite**, Microsoft's local Azure Storage emulator, standing in for ADLS Gen2
 - **A web UI** on <http://localhost:8080>: live events as they are captured, a browser for the
   files in the lake, the source tables for comparison, and the licences, for either connector
@@ -38,7 +38,7 @@ You need Docker with Compose v2 (Docker Desktop, or Docker Engine on Linux/WSL),
 free disk space and 8 GB of memory for Docker.
 
 ```bash
-git clone https://github.com/yokunade/Vectezium.git && cd Vectezium
+git clone https://github.com/yokunade/vectezium-demo.git && cd vectezium-demo
 docker compose up -d --build
 ```
 
@@ -297,13 +297,11 @@ for real, change these demo settings:
 | Path | |
 |---|---|
 | `docker-compose.yml` | The whole demo |
-| `vectezium/Dockerfile` | Builds Vectezium: Vector v0.60.0 (pinned commit) + both patches, on a distroless base |
-| `vectezium/mysql_cdc.patch` | The `mysql_cdc` source, the shared CDC core and the `azure_blob` sink options, as a patch to Vector |
+| `vectezium/Dockerfile` | Builds Vectezium from the [fork](https://github.com/yokunade/Vectezium) at a pinned commit, on a distroless base |
 | `vectezium/vectezium.yaml` | The connector config |
-| `vectezium/NOTICE`, `LICENSE-3rdparty-mysql_cdc.csv` | Notices for Vectezium (see [Licence](#licence)) |
+| `vectezium/NOTICE`, `LICENSE-3rdparty-cdc.csv` | Notices for Vectezium (see [Licence](#licence)) |
 | `mysql/init/` | Users and the seeded `shop` database (runs on the first start) |
 | `postgres/init/` | The PostgreSQL users, shop and publication (runs on the first start) |
-| `vectezium/postgres_cdc.patch` | The `postgres_cdc` source, as a patch on top of `mysql_cdc.patch` |
 | `ui/` | The web UI (FastAPI) and its sign-in (`auth.py`), plus `init_storage.py` and `resnapshot.py` |
 | `scripts/` | `changes.sh`, `simulate.sh`, `snapshot.sh`, `add-table.sh`, `lose-offsets.sh`, `reset.sh` |
 | `docs/` | The screenshot above |
@@ -321,25 +319,25 @@ Everything in this repository is licensed under the
 [Mozilla Public License 2.0](https://www.mozilla.org/MPL/2.0/) (MPL-2.0). See [`LICENSE`](LICENSE).
 
 Vectezium is a modified version of [Vector](https://github.com/vectordotdev/vector), which is
-also licensed under the MPL-2.0. [`vectezium/mysql_cdc.patch`](vectezium/mysql_cdc.patch)
-changes some of Vector's files and adds new ones.
+also licensed under the MPL-2.0. The fork's `vectezium` branch changes some of Vector's files and
+adds new ones.
 
 | File | |
 |---|---|
 | [`vectezium/NOTICE`](vectezium/NOTICE) | What Vectezium is built from, and Vector's own NOTICE (Datadog copyright, OpenSSL notices) |
-| [`vectezium/LICENSE-3rdparty-mysql_cdc.csv`](vectezium/LICENSE-3rdparty-mysql_cdc.csv) | The Rust crates the patch adds (`mysql_async`, `mysql_common`, `btoi`, `keyed_priority_queue`, `saturating`). All are MIT or MIT/Apache-2.0 |
+| [`vectezium/LICENSE-3rdparty-cdc.csv`](vectezium/LICENSE-3rdparty-cdc.csv) | The Rust crates the CDC sources add (`mysql_async` and its dependencies, Materialize's `rust-postgres` fork). All are MIT or MIT/Apache-2.0 |
 
-The **Licences** tab in the UI shows them too. The Vectezium image carries Vector's licence, the
-NOTICE and a copy of the patch in `/usr/share/doc/vectezium/`. It also has Vector's
-`LICENSE-3rdparty.csv` with the added crates appended. Its `org.opencontainers.image.licenses`
-label is `MPL-2.0`.
+The **Licences** tab in the UI shows them too. The Vectezium image carries the fork's licence,
+NOTICE and `LICENSE-3rdparty.csv` (which includes the added crates) in
+`/usr/share/doc/vectezium/`, with a `SOURCE` file linking to the commit it was built from. Its
+`org.opencontainers.image.licenses` label is `MPL-2.0`.
 
-The source of Vectezium is Vector at the commit pinned in
-[`vectezium/Dockerfile`](vectezium/Dockerfile) plus the patch. If you share the image or the
-binary, the MPL-2.0 requires that you:
+The source of Vectezium is the [fork](https://github.com/yokunade/Vectezium) at the commit pinned
+in [`vectezium/Dockerfile`](vectezium/Dockerfile). If you share the image or the binary, the
+MPL-2.0 requires that you:
 
 - make the source available to recipients and tell them how to get it, for example with a link
-  to this repository.
+  to the fork.
 - leave the licence and notice files in place.
 - license any changes you make to MPL-2.0 files under the MPL-2.0 too.
 

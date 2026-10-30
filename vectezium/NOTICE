@@ -1,17 +1,15 @@
-Vectezium is a modified version of Vector (https://github.com/vectordotdev/vector), built from
-Vector v0.60.0 (commit 0d0b35865036f8b5c2f0104d9744fa84985ffff1) with mysql_cdc.patch and
-postgres_cdc.patch applied, in that order.
+Vectezium is a modified version of Vector (https://github.com/vectordotdev/vector), forked from
+Vector v0.60.0 (commit 0d0b35865036f8b5c2f0104d9744fa84985ffff1). The `vectezium` branch of
+https://github.com/yokunade/Vectezium adds a shared change-data-capture core, the mysql_cdc and
+postgres_cdc sources, and two azure_blob sink options. The demo builds it at the commit pinned in
+vectezium/Dockerfile, which is the Source Code Form of the image it builds.
 
-Modifications copyright (c) 2026 yokunade.
+Modifications copyright (c) 2026 yokunade, licensed under the Mozilla Public License, version 2.0
+(MPL-2.0), like Vector itself. A built image carries this licence, notice and the third-party
+crate list in /usr/share/doc/vectezium/, with a link to the source.
 
-Vector and the modifications in both patches are licensed under the Mozilla Public License,
-version 2.0 (MPL-2.0); see LICENSE. The Source Code Form of this modified version is the Vector
-source at the commit above plus the two patches, published at
-https://github.com/yokunade/Vectezium. A built image carries copies of this notice and the
-patches in /usr/share/doc/vectezium/.
-
-The third-party Rust crates compiled into Vectezium, and their licences, are listed in Vector's
-LICENSE-3rdparty.csv; LICENSE-3rdparty-mysql_cdc.csv lists the crates the patches add.
+The third-party Rust crates compiled into Vectezium, and their licences, are listed in the fork's
+LICENSE-3rdparty.csv; LICENSE-3rdparty-cdc.csv lists the ones the CDC sources add.
 
 Vector's NOTICE follows.
 

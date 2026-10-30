@@ -206,18 +206,19 @@
         <h3>Vectezium is a modified version of Vector</h3>
         <p>
           Vectezium is <a href="https://github.com/vectordotdev/vector" target="_blank" rel="noopener">Vector</a>
-          v0.60.0 with <code>vectezium/mysql_cdc.patch</code> and <code>vectezium/postgres_cdc.patch</code> applied.
-          Vector and the patches are licensed under the
+          v0.60.0 with change data capture sources for MySQL and PostgreSQL. Vector and the changes are licensed under the
           <a href="https://www.mozilla.org/MPL/2.0/" target="_blank" rel="noopener">Mozilla Public License 2.0</a>.
-          Its source is Vector at the commit pinned in <code>vectezium/Dockerfile</code> plus the patches.
+          Its source is the <code>vectezium</code> branch of
+          <a href="https://github.com/yokunade/Vectezium" target="_blank" rel="noopener">yokunade/Vectezium</a>,
+          at the commit pinned in <code>vectezium/Dockerfile</code>.
           The image carries these files in <code>/usr/share/doc/vectezium/</code>.
         </p>
         <p>
           The rest of this demo is MPL-2.0 too: see
-          <a href="https://github.com/yokunade/Vectezium" target="_blank" rel="noopener">yokunade/Vectezium</a>.
+          <a href="https://github.com/yokunade/vectezium-demo" target="_blank" rel="noopener">yokunade/vectezium-demo</a>.
         </p>
 
-        <h3>Crates the patches add</h3>
+        <h3>Crates the CDC sources add</h3>
         <p class="muted small">Vector's own third-party crates are listed in its <code>LICENSE-3rdparty.csv</code>.</p>
         <div id="licence-crates"></div>
 

@@ -120,7 +120,7 @@ services:
       # The licence files, shown in the Licences tab.
       - ./LICENSE:/licences/LICENSE:ro
       - ./vectezium/NOTICE:/licences/NOTICE:ro
-      - ./vectezium/LICENSE-3rdparty-mysql_cdc.csv:/licences/LICENSE-3rdparty-mysql_cdc.csv:ro
+      - ./vectezium/LICENSE-3rdparty-cdc.csv:/licences/LICENSE-3rdparty-cdc.csv:ro
     depends_on:
       mysql:
         condition: service_healthy
