@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Deletes everything the demo created (MySQL data, the lake, Vectezium's offsets, the live event
-# file) and removes the tables add-table.sh added to the config. The next
-# `docker compose up -d` starts from the seeded database and a first snapshot.
+# Deletes everything the demo created (MySQL and PostgreSQL data, the lake, Vectezium's offsets,
+# the live event files) and removes the tables add-table.sh added to the config. The next
+# `docker compose up -d` starts from the seeded databases and a first snapshot. Covers both
+# connectors (tables added to PostgreSQL's publication go with its data).
 source "$(dirname "$0")/lib.sh"
 
 say "Removing the containers and volumes"

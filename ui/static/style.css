@@ -147,6 +147,10 @@ header {
 .brand-text strong { font-size: 15px; letter-spacing: -0.02em; }
 .tagline { font-size: 11.5px; color: var(--muted); }
 
+/* The source connector dropdown, next to the brand. */
+.connector-select { margin-left: 10px; }
+.connector-select select { min-width: 0; padding-top: 5px; padding-bottom: 5px; font-size: 13px; font-weight: 500; }
+
 /* Plain tabs with an underline that slides to the active one (positioned by app.js). */
 .tabs { position: relative; display: flex; align-items: stretch; gap: 4px; }
 .tab-indicator {
@@ -156,7 +160,7 @@ header {
 }
 button.tab {
   padding: 0 12px; border: 0; border-radius: 0; background: transparent;
-  color: var(--muted); font-weight: 500;
+  color: var(--muted); font-weight: 500; white-space: nowrap;
 }
 button.tab:hover { color: var(--text); background: transparent; }
 button.tab:active { transform: none; }
@@ -295,6 +299,9 @@ main { padding: 22px 24px 40px; max-width: 1560px; margin: 0 auto; }
 .card .detail { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #batching-count .badge { margin-right: 4px; }
 .card .value.seq-value { font-size: 14px; font-weight: 400; letter-spacing: 0; line-height: 1.3; margin: 6px 0 2px; }
+/* All connectors: a published seq per connector. */
+.seq-value .seq-line { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; white-space: nowrap; }
+.seq-value .seq-source { min-width: 74px; font-family: var(--sans); font-size: 11px; color: var(--muted); }
 .card .since { font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .card .rate { font-size: 11.5px; }
 .card .rate strong { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -372,6 +379,10 @@ table.events .tbl .db { color: var(--muted); font-weight: 400; }
 table.events td.key { color: var(--text-2); }
 table.events td.data { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); }
 table.events td.seq { font-size: 12px; }
+/* The Source column shows only with all connectors (table.events.multi). */
+table.events .src { display: none; }
+table.events.multi .src { display: table-cell; }
+.source-tag { font-size: 11.5px; font-weight: 500; color: var(--text-2); padding: 1px 7px; border-radius: 6px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--border); }
 table.events td.seq .seq-sig { font-weight: 500; color: var(--text-2); }
 
 .j-key { color: var(--j-key); }
@@ -458,6 +469,11 @@ dialog#event-modal::backdrop { background: rgba(8, 10, 16, 0.45); backdrop-filte
 .tree .file.selected { background: var(--accent-soft); color: var(--accent); }
 .tree .file.selected svg.i { color: var(--accent); }
 .tree .file.new { animation: flash 3s ease-out; }
+.tree-root {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 12px; font-weight: 600; color: var(--text-2);
+}
+.tree-root svg.i { width: 14px; height: 14px; color: var(--accent); }
+.tree-root:not(:first-child) { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
 .tree .count {
   color: var(--muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
   padding: 0 6px; border-radius: 999px; background: var(--panel-2);
@@ -480,9 +496,14 @@ table.grid td.json { font-family: var(--mono); font-size: 12px; max-width: 700px
 table.grid td.null { color: var(--faint); font-style: italic; }
 .scroll { overflow: auto; max-height: calc(100vh - var(--header-h) - 170px); border-radius: 10px; }
 
-/* ------------------------------------------------------------------------------------- mysql */
+/* --------------------------------------------------------------------------- source database */
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.chips-label {
+  align-self: center; margin: 0 2px 0 6px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+}
+.chips-label:first-child { margin-left: 0; }
 .chips button {
   display: inline-flex; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-radius: 999px;
   font-weight: 500; box-shadow: var(--shadow-sm);

@@ -4,12 +4,15 @@
 #
 #   ./scripts/simulate.sh [seconds] [ops-per-second]    defaults: 60 seconds, 5 operations a second
 #   ./scripts/simulate.sh 0 20                          until Ctrl-C, 20 operations a second
+#   ./scripts/simulate.sh --connector postgres 60 10    the PostgreSQL shop (or CONNECTOR=postgres)
 #
 # Each operation is one transaction:
-#   inserts  a customer, a product, an order with 1-3 lines, a line added to an open order,
-#            a review (if shop.reviews exists: ./scripts/add-table.sh)
+#   inserts  a customer, a product, an order (MySQL: with 1-3 lines; PostgreSQL: with the stock it
+#            takes), a line added to an open order (MySQL), a review (if a reviews table exists:
+#            ./scripts/add-table.sh)
 #   updates  a customer's tier and email, a product's price or stock, an order moving from
-#            placed to paid to shipped, an order line's quantity (with the order total)
+#            placed to paid to shipped, an order line's quantity with the order total (MySQL),
+#            a tag added to a customer's tags array (PostgreSQL)
 # Every second's operations run in one batch; a line per second shows what was sent.
 source "$(dirname "$0")/lib.sh"
 require_running
@@ -17,7 +20,7 @@ require_running
 SECS=${1:-60}
 RATE=${2:-5}
 if ! [[ $SECS =~ ^[0-9]+$ && $RATE =~ ^[1-9][0-9]*$ ]]; then
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 fi
 
@@ -26,6 +29,7 @@ LAST=(Adeyemi Berg Costa Dubois Eriksen Fischer Garcia Horvat Ito Jensen Kaur Lo
 COUNTRIES=(GB IE FR DE NL ES PT IT)
 PRODUCTS=(Lamp Kettle Backpack Notebook Mug Blanket Speaker Planter Clock Scarf)
 COLOURS=(black navy sage rust white)
+TAGS=(vip newsletter returns wholesale gift)
 TITLES=("Love it" "Does the job" "Not for me" "Great value" "Arrived late" "Would buy again")
 pick() { local list=("$@"); echo "${list[RANDOM % $#]}"; }
 # A random id from 1 to $1 (RANDOM alone stops at 32767).
@@ -34,7 +38,7 @@ rnd() { echo $((1 + (RANDOM * 32768 + RANDOM) % $1)); }
 # Upper bounds for picking existing rows; ids that were deleted simply match nothing.
 read -r MAX_CUSTOMER MAX_PRODUCT MAX_ORDER HAS_REVIEWS < <(query "
   SELECT (SELECT MAX(id) FROM customers), (SELECT MAX(id) FROM products), (SELECT MAX(id) FROM orders),
-         (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'shop' AND table_name = 'reviews')")
+         (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$SCHEMA' AND table_name = 'reviews')")
 
 # Sets @o to an open (placed) order, preferring one at or after a random id.
 open_order() {
@@ -122,11 +126,79 @@ $TOTAL
 COMMIT;"
 }
 
+# ---------------------------------------------------------------------------------- PostgreSQL
+
+# The same operations in PostgreSQL's dialect, replacing the ones above. Its shop has no order
+# lines: an order takes stock from 1-3 products and records their total.
+if [ "$CONNECTOR" = postgres ]; then
+  insert_customer() {
+    local name; name="$(pick "${FIRST[@]}") $(pick "${LAST[@]}")"
+    echo "INSERT INTO customers (name, email, country, password_hash)
+  VALUES ('$name', '$(tr 'A-Z ' 'a-z.' <<<"$name").$RANDOM$RANDOM@example.com', '$(pick "${COUNTRIES[@]}")',
+          encode(sha256(gen_random_uuid()::text::bytea), 'hex'));"
+  }
+
+  insert_product() {
+    echo "INSERT INTO products (sku, name, price, stock, attributes)
+  VALUES ('SIM-' || floor(extract(epoch FROM now()))::bigint || '-' || $RANDOM, '$(pick "${COLOURS[@]}") $(pick "${PRODUCTS[@]}")',
+          $((5 + RANDOM % 195)).$((RANDOM % 100)), $((10 + RANDOM % 200)),
+          jsonb_build_object('colour', '$(pick "${COLOURS[@]}")', 'weight_g', $((100 + RANDOM % 2000))));"
+  }
+
+  insert_order() {
+    local i lines=$((1 + RANDOM % 3)) items=""
+    for ((i = 1; i <= lines; i++)); do
+      items+="${items:+, }($(rnd "$MAX_PRODUCT"), $((1 + RANDOM % 3)))"
+    done
+    echo "BEGIN;
+INSERT INTO orders (customer_id, total)
+  SELECT c.id, (SELECT COALESCE(SUM(p.price * l.qty), 0) FROM products p JOIN (VALUES $items) l (id, qty) ON l.id = p.id)
+  FROM customers c WHERE c.id >= $(rnd "$MAX_CUSTOMER") ORDER BY c.id LIMIT 1;
+UPDATE products p SET stock = p.stock - l.qty FROM (VALUES $items) l (id, qty) WHERE l.id = p.id;
+COMMIT;"
+  }
+
+  update_customer() {
+    echo "UPDATE customers
+  SET loyalty_tier = (ARRAY['bronze', 'silver', 'gold'])[1 + floor(random() * 3)::int]::loyalty_tier,
+      email = split_part(email, '@', 1) || '@' || (ARRAY['example.com', 'example.org'])[1 + floor(random() * 2)::int],
+      updated_at = now()
+  WHERE id = $(rnd "$MAX_CUSTOMER");"
+  }
+
+  update_product() {
+    if ((RANDOM % 2)); then
+      echo "UPDATE products SET price = round(price * (0.95 + random() * 0.1)::numeric, 2) WHERE id = $(rnd "$MAX_PRODUCT");"
+    else
+      echo "UPDATE products SET stock = stock + $((5 + RANDOM % 50)) WHERE id = $(rnd "$MAX_PRODUCT");"
+    fi
+  }
+
+  advance_order() {
+    echo "UPDATE orders SET status = CASE status WHEN 'placed' THEN 'paid' ELSE 'shipped' END
+  WHERE id = COALESCE(
+    (SELECT id FROM orders WHERE status IN ('placed', 'paid') AND id >= $(rnd "$MAX_ORDER") ORDER BY id LIMIT 1),
+    (SELECT MIN(id) FROM orders WHERE status IN ('placed', 'paid')));"
+  }
+
+  # An array column: the event carries the whole new array.
+  tag_customer() {
+    local tag; tag=$(pick "${TAGS[@]}")
+    echo "UPDATE customers SET tags = array_append(array_remove(tags, '$tag'), '$tag'), updated_at = now()
+  WHERE id = $(rnd "$MAX_CUSTOMER");"
+  }
+fi
+
 # ------------------------------------------------------------------------------------- the loop
 
-# Operation, weight. Roughly 45% inserts and 55% updates.
-OPS=(insert_customer:10 insert_product:4 insert_order:12 add_order_line:7
-     update_customer:16 update_product:15 advance_order:14 change_line_qty:10)
+# Operation, weight. Roughly 45% inserts and 55% updates (PostgreSQL: 40% and 60%).
+if [ "$CONNECTOR" = mysql ]; then
+  OPS=(insert_customer:10 insert_product:4 insert_order:12 add_order_line:7
+       update_customer:16 update_product:15 advance_order:14 change_line_qty:10)
+else
+  OPS=(insert_customer:10 insert_product:4 insert_order:19
+       update_customer:16 update_product:15 advance_order:14 tag_customer:10)
+fi
 ((HAS_REVIEWS)) && OPS+=(insert_review:6)
 WEIGHTS=0
 for op in "${OPS[@]}"; do WEIGHTS=$((WEIGHTS + ${op#*:})); done
@@ -148,8 +220,8 @@ summary() {
 }
 trap summary INT
 
-say "Simulating shop traffic: $RATE operations a second, $([ "$SECS" -eq 0 ] && echo "until Ctrl-C" || echo "for $SECS s")"
-echo "tables: customers, products, orders, order_items$( ((HAS_REVIEWS)) && echo ", reviews")"
+say "Simulating shop traffic in $LABEL: $RATE operations a second, $([ "$SECS" -eq 0 ] && echo "until Ctrl-C" || echo "for $SECS s")"
+echo "tables: customers, products, orders$([ "$CONNECTOR" = mysql ] && echo ", order_items")$( ((HAS_REVIEWS)) && echo ", reviews")"
 SENT=0
 STARTED=$SECONDS
 while ((SECS == 0 || SECONDS - STARTED < SECS)); do
@@ -161,8 +233,8 @@ while ((SECS == 0 || SECONDS - STARTED < SECS)); do
     counts[$op]=$((${counts[$op]:-0} + 1))
     TOTALS[$op]=$((${TOTALS[$op]:-0} + 1))
   done
-  # --force: a statement that fails (say, a duplicate email) does not stop the rest of the batch.
-  errors=$(mysql_app --force <<<"$batch" 2>&1 >/dev/null | grep '^ERROR' || true)
+  # A statement that fails (say, a duplicate email) does not stop the rest of the batch.
+  errors=$(sql_batch <<<"$batch")
   SENT=$((SENT + RATE))
   for op in "${!counts[@]}"; do line+=" ${op}=${counts[$op]}"; done
   printf '%s %5d sent |%s\n' "$(date +%T)" "$SENT" "$line"

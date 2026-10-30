@@ -17,7 +17,7 @@ This repository is a local, self-contained demo of it. One `docker compose up` s
 - **Vectezium**, built from source: Vector v0.60.0 with both patches applied
 - **Azurite**, Microsoft's local Azure Storage emulator, standing in for ADLS Gen2
 - **A web UI** on <http://localhost:8080>: live events as they are captured, a browser for the
-  files in the lake, the MySQL tables for comparison, and the licences
+  files in the lake, the source tables for comparison, and the licences, for either connector
 
 ![The Live events tab: inserts, updates and a delete captured from MySQL, each marked "in lake"](docs/ui.png)
 
@@ -57,6 +57,24 @@ commits.
 
 The scripts are bash. On Windows, run them from WSL or Git Bash.
 
+### Choosing the connector
+
+The demo has two connectors: `shop` (MySQL, the default) and `shop_pg` (PostgreSQL, see
+[PostgreSQL](#postgresql)). Every script works on either one. Add `--connector postgres` (or
+`--postgres`) anywhere in its arguments, or set `CONNECTOR=postgres` for a whole shell session:
+
+```bash
+./scripts/changes.sh --connector postgres insert 3
+CONNECTOR=postgres ./scripts/simulate.sh 120 10
+./scripts/snapshot.sh --connector postgres public.products   # PostgreSQL tables are public.<table>
+```
+
+In the UI, the source connector dropdown next to the logo picks what every tab shows: **All
+connectors** (the default), **MySQL** or **PostgreSQL**. `C` cycles through them. With all
+connectors, the live feed merges both streams with a Source column, the commit point card has a
+line per connector, the lake shows both folders and the database tab both databases. The choice is
+remembered, and a link such as <http://localhost:8080/?connector=postgres> opens one.
+
 ## Things to try
 
 ### a) Inserts, updates and deletes
@@ -66,6 +84,7 @@ The scripts are bash. On Windows, run them from WSL or Git Bash.
 ./scripts/changes.sh update 2      # change the loyalty tier and email of two customers
 ./scripts/changes.sh delete 1      # delete a customer who has no orders
 ./scripts/changes.sh order         # one transaction: an order, its lines, product stock
+                                   #   (PostgreSQL has no order lines: an order and product stock)
 ./scripts/changes.sh stream 120    # a random mix of all of the above for two minutes
 ./scripts/changes.sh sql "UPDATE products SET price = price * 1.1 WHERE id = 7"
 ./scripts/simulate.sh 120 10       # shop traffic: inserts and updates across all tables, 10/s
@@ -202,17 +221,19 @@ writes it to `cdc/shop_pg/` in the same layout as `cdc/shop/`: row files per tab
 `cdc/shop_pg/public/<table>/`, plus `_control/`, `_schemas/` and `_offsets/`. On its first start
 it creates the replication slot `vectezium` and streams every committed change from there, while
 it reads the three tables (2,220 rows) in chunks of 250: an incremental snapshot, like the MySQL
-connector's. The UI shows the MySQL connector only; browse `cdc/shop_pg/` with Azure Storage
-Explorer.
+connector's. Switch the UI to **PostgreSQL** to watch it.
 
-Make some changes as the application user:
+Every script in [Things to try](#things-to-try) works on it with `--connector postgres`.
+`simulate.sh` also appends tags to the customers' `tags` array, and `add-table.sh` adds the new
+table to the publication `vectezium` (as the superuser: the publication is the DBA's) instead of
+editing the config. Or make changes by hand as the application user:
 
 ```bash
-docker compose exec postgres psql -U app -d shop -c "INSERT INTO customers (name, email, country, password_hash) VALUES ('Zoe Park', 'zoe@example.com', 'GB', repeat('0', 64))"
-docker compose exec postgres psql -U app -d shop -c "UPDATE customers SET loyalty_tier = 'gold' WHERE id = 1"
-docker compose exec postgres psql -U app -d shop -c "DELETE FROM orders WHERE id = 7"
-docker compose exec postgres psql -U app -d shop -c "ALTER TABLE products ADD COLUMN discontinued boolean DEFAULT false"
-docker compose exec postgres psql -U app -d shop -c "UPDATE products SET discontinued = true WHERE id = 3"
+./scripts/changes.sh --connector postgres insert 2
+./scripts/changes.sh --connector postgres sql "UPDATE customers SET loyalty_tier = 'gold' WHERE id = 1"
+./scripts/changes.sh --connector postgres sql "DELETE FROM orders WHERE id = 7"
+./scripts/changes.sh --connector postgres sql "ALTER TABLE products ADD COLUMN discontinued boolean DEFAULT false"
+./scripts/changes.sh --connector postgres sql "UPDATE products SET discontinued = true WHERE id = 3"
 ```
 
 Each change lands in `cdc/shop_pg/public/<table>/` within 10 seconds. PostgreSQL does not stream
@@ -254,7 +275,7 @@ What the source needs from a server, and how it behaves:
   queued for an ad-hoc snapshot:
 
   ```bash
-  ./scripts/snapshot.sh --postgres public.products
+  ./scripts/snapshot.sh --connector postgres public.products
   ```
 
 ## Running it against real Azure storage
@@ -329,9 +350,10 @@ own licence:
 
 | Software | Used for | Licence |
 |---|---|---|
-| [MySQL Community Server](https://www.mysql.com/) 8.4 (`mysql` image) | The source database | GPL-2.0, with Oracle's FOSS exception |
+| [MySQL Community Server](https://www.mysql.com/) 8.4 (`mysql` image) | The MySQL source database | GPL-2.0, with Oracle's FOSS exception |
+| [PostgreSQL](https://www.postgresql.org/) 17 (`postgres` image) | The PostgreSQL source database | PostgreSQL License |
 | [Azurite](https://github.com/Azure/Azurite) | The local stand-in for Azure Storage | MIT |
-| [FastAPI](https://fastapi.tiangolo.com/), [Uvicorn](https://www.uvicorn.org/), [PyMySQL](https://github.com/PyMySQL/PyMySQL), [Azure Storage Blobs for Python](https://github.com/Azure/azure-sdk-for-python) | The UI | MIT; Uvicorn BSD-3-Clause |
+| [FastAPI](https://fastapi.tiangolo.com/), [Uvicorn](https://www.uvicorn.org/), [PyMySQL](https://github.com/PyMySQL/PyMySQL), [pg8000](https://github.com/tlocke/pg8000), [Azure Storage Blobs for Python](https://github.com/Azure/azure-sdk-for-python) | The UI | MIT; Uvicorn and pg8000 BSD-3-Clause |
 | [distroless](https://github.com/GoogleContainerTools/distroless), `rust` and `python` base images | Building and running the containers | Apache-2.0; their packages carry their own licences |
 
 ## Acknowledgements

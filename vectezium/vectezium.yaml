@@ -6,7 +6,7 @@
 #     account reached with a managed identity
 #   - rows land in the lake after at most 10 seconds instead of 5 minutes (rows.batch.timeout_secs)
 #   - TLS to MySQL is off (the demo server only has a self-signed certificate)
-#   - one extra sink, `live`: every event also goes to a local file that the UI tails
+#   - extra sinks, `live` and `live_pg`: every event also goes to a local file that the UI tails
 #
 # Lake layout (container `raw`):
 #   cdc/shop/<db>/<table>/date=YYYY-MM-DD/<uuid>.json.gz   row changes: c, r, u, d (ordered by seq)
@@ -44,7 +44,6 @@ sources:
       - 'shop\.products'
       - 'shop\.orders'
       - 'shop\.order_items'
-      - 'shop\.reviews'   # added by scripts/add-table.sh
       # scripts/add-table.sh adds tables above this line
     column_exclude_list: ['shop\.customers\.password_hash']
     snapshot_mode: when_needed        # snapshot on first start (and if the binlog was purged)
@@ -102,6 +101,7 @@ sources:
     record_images: before_and_after
     include_table_schemas: true
     include_schema_changes: true
+    observe_output: true              # unacknowledged copies for the UI's live view (sink `live_pg`)
     offset_publish_interval_secs: 5
     publish_offsets: true
     single_writer_lock:
@@ -319,3 +319,16 @@ sinks:
     batch:
       max_events: 1
       timeout_secs: 1
+
+  # Demo only: the PostgreSQL connector's events for the UI's live view, as `live` does for MySQL.
+  live_pg:
+    type: file
+    inputs: ["postgres.observe", "postgres.offsets"]
+    path: /var/log/vectezium/live_pg.ndjson
+    encoding:
+      codec: json
+      except_fields: ["source_type"]
+    buffer:
+      type: memory
+      max_size: 33554432              # 32 MiB
+      when_full: drop_newest

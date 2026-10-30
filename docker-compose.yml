@@ -85,7 +85,7 @@ services:
     volumes:
       - ./vectezium/vectezium.yaml:/etc/vectezium/vectezium.yaml:ro
       - vectezium-data:/var/lib/vectezium    # offsets.json: where to resume
-      - events:/var/log/vectezium            # live.ndjson, read by the UI
+      - events:/var/log/vectezium            # live.ndjson, live_pg.ndjson: read by the UI
     secrets:
       - mysql-password
       - postgres-password
@@ -111,9 +111,12 @@ services:
       MYSQL_HOST: mysql
       MYSQL_USER: app
       MYSQL_PASSWORD: app-demo-pw
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app-demo-pw
     volumes:
       - ui-data:/data                 # auth.db: UI users and sessions
-      - events:/events                # read and trimmed in place (it would grow forever otherwise)
+      - events:/events                # live.ndjson, live_pg.ndjson: read and trimmed in place
       # The licence files, shown in the Licences tab.
       - ./LICENSE:/licences/LICENSE:ro
       - ./vectezium/NOTICE:/licences/NOTICE:ro
@@ -121,10 +124,12 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
       azurite:
         condition: service_started
 
-  # Used by scripts/snapshot.sh to edit Vectezium's offset file while it is stopped.
+  # Used by scripts/snapshot.sh and scripts/lose-offsets.sh to edit Vectezium's offset file while it is stopped.
   tools:
     build: ./ui
     image: vectezium-demo/ui:local
