@@ -2,7 +2,8 @@
 
   python resnapshot.py <db.table> [<db.table> ...]   snapshot these tables
   python resnapshot.py --all                         snapshot every table; also approves a full
-                                                     re-snapshot after a purged binlog
+                                                     re-snapshot after a purged binlog (MySQL) or
+                                                     a lost replication slot (PostgreSQL)
   python resnapshot.py --dismiss <db.table> [...]    mark held tables as snapshotted, without
                                                      reading them
 
@@ -23,7 +24,8 @@ import json
 import os
 import sys
 
-# Vectezium's data_dir is mounted at /data; each source keeps its state in a folder named after it.
+# Vectezium's data_dir is mounted at /data; each source keeps its state in a folder named after it
+# (`mysql`, `postgres`). Both connectors' offset files have the same snapshot fields.
 OFFSETS = os.environ.get("OFFSETS_FILE", "/data/mysql/offsets.json")
 
 
@@ -73,7 +75,7 @@ def main(args):
             tables += [list(t) for t in done + held if list(t) not in tables]
             offset["resnapshot_approved"] = True
             changed += 1
-            print("Approved a full re-snapshot if the binlog was purged")
+            print("Approved a full re-snapshot if the binlog was purged (or the slot was lost)")
         for t in tables:
             name = ".".join(t)
             if t in pending:

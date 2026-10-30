@@ -200,9 +200,10 @@ password.
 The second connector, `shop_pg`, captures the PostgreSQL shop with the `postgres_cdc` source and
 writes it to `cdc/shop_pg/` in the same layout as `cdc/shop/`: row files per table under
 `cdc/shop_pg/public/<table>/`, plus `_control/`, `_schemas/` and `_offsets/`. On its first start
-it creates the replication slot `vectezium` with an exported snapshot, reads the three tables in
-that snapshot (2,220 rows), then streams every committed change. The UI shows the MySQL
-connector only; browse `cdc/shop_pg/` with Azure Storage Explorer.
+it creates the replication slot `vectezium` and streams every committed change from there, while
+it reads the three tables (2,220 rows) in chunks of 250: an incremental snapshot, like the MySQL
+connector's. The UI shows the MySQL connector only; browse `cdc/shop_pg/` with Azure Storage
+Explorer.
 
 Make some changes as the application user:
 
@@ -244,8 +245,17 @@ What the source needs from a server, and how it behaves:
   `snapshot_mode: when_needed` (then the re-snapshot waits for approval with
   `unplanned_snapshots: hold`, as for MySQL: set `"resnapshot_approved": true` in its offset
   file).
-- **Not yet.** Incremental (chunked) snapshots, `snapshot_new_tables` and ad-hoc snapshots are
-  MySQL-only so far: a PostgreSQL table added to the publication later gets changes from then on.
+- **Snapshots.** `snapshot_strategy: blocking` reads every table in the slot's exported snapshot
+  before streaming. `incremental` (the demo's) streams at once and reads tables in key order, in
+  chunks, each one short transaction: Debezium's read-only incremental snapshot, using
+  `pg_current_snapshot()` to tell which streamed changes are newer than a chunk. Tables need a
+  primary key (or `pk_override`). With `snapshot_new_tables: true`, a table added to the
+  publication later is snapshotted the same way when the source next starts, and so is a table
+  queued for an ad-hoc snapshot:
+
+  ```bash
+  ./scripts/snapshot.sh --postgres public.products
+  ```
 
 ## Running it against real Azure storage
 

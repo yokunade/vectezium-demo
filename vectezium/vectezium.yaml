@@ -93,6 +93,9 @@ sources:
     schema_include_list: ["public"]
     column_exclude_list: ['public\.customers\.password_hash']
     snapshot_mode: when_needed        # snapshot on first start (and if the slot was invalidated)
+    snapshot_strategy: incremental    # snapshot in chunks while streaming: no long transactions
+    incremental_snapshot_chunk_size: 250
+    snapshot_new_tables: true         # tables added to the publication later, and ad-hoc snapshots
     unplanned_snapshots: hold
     decimal_handling_mode: string
     event_format: record
