@@ -1,4 +1,4 @@
-# Vectezium config for the demo connector `shop`.
+# Vectezium config for the demo connectors: `shop` (MySQL) and `shop_pg` (PostgreSQL).
 #
 # This is the config a real deployment runs for a connector (one MySQL server -> one folder in a
 # storage account), with these demo changes:
@@ -74,6 +74,42 @@ sources:
       latest_blob: cdc/shop/_offsets/latest.json
       folder: cdc/shop/
       control_prefix: cdc/shop/_control/
+
+  # The second connector, `shop_pg`: the PostgreSQL shop, through the slot `vectezium` and the
+  # publication of the same name (created in postgres/init/02-shop.sql). Same lake layout, in
+  # cdc/shop_pg/; metadata.db is the schema (`public`).
+  postgres:
+    type: postgres_cdc
+    hostname: postgres
+    port: 5432
+    user: vectezium
+    password: SECRET[kv.postgres-password]
+    database: shop
+    ssl_mode: disable                 # the demo server has no certificate
+    topic_prefix: shop_pg
+    slot_name: vectezium
+    publication_name: vectezium
+    publication_autocreate_mode: disabled
+    schema_include_list: ["public"]
+    column_exclude_list: ['public\.customers\.password_hash']
+    snapshot_mode: when_needed        # snapshot on first start (and if the slot was invalidated)
+    unplanned_snapshots: hold
+    decimal_handling_mode: string
+    event_format: record
+    record_images: before_and_after
+    include_table_schemas: true
+    include_schema_changes: true
+    offset_publish_interval_secs: 5
+    publish_offsets: true
+    single_writer_lock:
+      connection_string: *azurite
+      container_name: raw
+      blob_name: cdc/shop_pg/_lock
+      lease_duration_secs: 30
+    offset_recovery:
+      latest_blob: cdc/shop_pg/_offsets/latest.json
+      folder: cdc/shop_pg/
+      control_prefix: cdc/shop_pg/_control/
 
 sinks:
   # Row changes (c, r, u, d) per table, ordered by metadata.seq.
@@ -188,3 +224,95 @@ sinks:
       type: memory
       max_size: 33554432              # 32 MiB
       when_full: drop_newest
+
+  # The PostgreSQL connector's lake folder, cdc/shop_pg/: the same layout as cdc/shop/.
+  rows_pg:
+    type: azure_blob
+    inputs: ["postgres"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop_pg/{{ metadata.db }}/{{ metadata.table }}/date=%Y-%m-%d/"
+    blob_append_uuid: true
+    blob_extension: json.gz
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: gzip
+    batch:
+      max_bytes: 100000000
+      timeout_secs: 10
+
+  control_pg:
+    type: azure_blob
+    inputs: ["postgres.control"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop_pg/_control/date=%Y-%m-%d/"
+    blob_append_uuid: true
+    blob_extension: json.gz
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: gzip
+    batch:
+      timeout_secs: 10
+
+  table_schemas_pg:
+    type: azure_blob
+    inputs: ["postgres.table_schemas"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop_pg/_schemas/{{ db }}/{{ table }}/{{ schema_version }}"
+    blob_time_format: ""
+    blob_append_uuid: false
+    blob_overwrite: true
+    blob_extension: json
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: none
+    batch:
+      timeout_secs: 10
+
+  offsets_history_pg:
+    type: azure_blob
+    inputs: ["postgres.offsets"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop_pg/_offsets/history/date=%Y-%m-%d/"
+    blob_append_uuid: true
+    blob_extension: json
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: none
+    batch:
+      timeout_secs: 10
+
+  offsets_latest_pg:
+    type: azure_blob
+    inputs: ["postgres.offsets"]
+    connection_string: *azurite
+    container_name: raw
+    blob_prefix: "cdc/shop_pg/_offsets/latest"
+    blob_time_format: ""
+    blob_append_uuid: false
+    blob_overwrite: true
+    blob_extension: json
+    encoding:
+      codec: json
+      except_fields: ["source_type", "timestamp"]
+    framing:
+      method: newline_delimited
+    compression: none
+    batch:
+      max_events: 1
+      timeout_secs: 1

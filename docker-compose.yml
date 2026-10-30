@@ -1,5 +1,5 @@
-# Vectezium demo: MySQL 8.4 (seeded `shop` database) -> Vectezium -> Azurite (local Azure Storage
-# emulator standing in for ADLS), plus a web UI on http://localhost:8080.
+# Vectezium demo: MySQL 8.4 and PostgreSQL 17 (each with a seeded `shop` database) -> Vectezium ->
+# Azurite (local Azure Storage emulator standing in for ADLS), plus a web UI on http://localhost:8080.
 #
 #   docker compose up -d --build      first build compiles Vectezium from source (10-30 minutes)
 #   docker compose down -v            stop and delete all data (or ./scripts/reset.sh)
@@ -29,6 +29,30 @@ services:
       - mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot-demo-pw"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+
+  # The second source database, set up for logical replication (postgres_cdc). Its tables land in
+  # cdc/shop_pg/ in the lake.
+  postgres:
+    image: postgres:17@sha256:31ba9c94a03ada9988f2bb493a22a75eef3a185884533e5cdbcd498ea835b08f
+    command:
+      - -c
+      - wal_level=logical
+      - -c
+      - max_slot_wal_keep_size=1GB     # a stuck slot invalidates rather than filling the disk
+    environment:
+      POSTGRES_PASSWORD: postgres-demo-pw
+      POSTGRES_DB: shop
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - "5433:5432"                   # for your own client: localhost:5433, database shop, user app
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "shop"]
       interval: 3s
       timeout: 3s
       retries: 60
@@ -64,8 +88,11 @@ services:
       - events:/var/log/vectezium            # live.ndjson, read by the UI
     secrets:
       - mysql-password
+      - postgres-password
     depends_on:
       mysql:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       storage-init:
         condition: service_completed_successfully
@@ -109,9 +136,12 @@ services:
 secrets:
   mysql-password:
     file: ./vectezium/mysql-password
+  postgres-password:
+    file: ./vectezium/postgres-password
 
 volumes:
   mysql-data:
+  postgres-data:
   azurite-data:
   vectezium-data:
   events:

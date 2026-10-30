@@ -1,16 +1,20 @@
 # Vectezium demo
 
-**Vectezium** is [Vector](https://vector.dev) with a MySQL change data capture (CDC) source: it
-reads the MySQL binlog and writes every insert, update and delete straight into an Azure Data
-Lake landing zone, in the style of [Debezium](https://debezium.io) but without Kafka or Kafka
-Connect. It is a patch to Vector v0.60.0,
-[`vectezium/mysql_cdc.patch`](vectezium/mysql_cdc.patch).
+**Vectezium** is [Vector](https://vector.dev) with change data capture (CDC) sources for MySQL
+and PostgreSQL: it reads the MySQL binlog or a PostgreSQL logical replication slot and writes
+every insert, update and delete straight into an Azure Data Lake landing zone, in the style of
+[Debezium](https://debezium.io) but without Kafka or Kafka Connect. It is two patches to Vector
+v0.60.0, applied in order: [`vectezium/mysql_cdc.patch`](vectezium/mysql_cdc.patch) (the MySQL
+source and the shared CDC core) and [`vectezium/postgres_cdc.patch`](vectezium/postgres_cdc.patch)
+(the PostgreSQL source).
 
 This repository is a local, self-contained demo of it. One `docker compose up` starts:
 
 - **MySQL 8.4** with a seeded `shop` database (customers, products, orders, order items), set up
   for CDC: row-based binlog, full row images and metadata, GTIDs
-- **Vectezium**, built from source: Vector v0.60.0 with the patch applied
+- **PostgreSQL 17** with the same shop (customers, products, orders) in schema `public`, set up
+  for logical replication: `wal_level=logical`, a publication, `REPLICA IDENTITY FULL`
+- **Vectezium**, built from source: Vector v0.60.0 with both patches applied
 - **Azurite**, Microsoft's local Azure Storage emulator, standing in for ADLS Gen2
 - **A web UI** on <http://localhost:8080>: live events as they are captured, a browser for the
   files in the lake, the MySQL tables for comparison, and the licences
@@ -188,7 +192,60 @@ keep the same `seq`. `customers.password_hash` never leaves MySQL because of
 
 You can also browse the lake with [Azure Storage Explorer](https://azure.microsoft.com/products/storage/storage-explorer):
 connect to *Local storage emulator* on port 10000. MySQL is on `localhost:3307`, user `app`,
-password `app-demo-pw`.
+password `app-demo-pw`; PostgreSQL on `localhost:5433`, database `shop`, the same user and
+password.
+
+## PostgreSQL
+
+The second connector, `shop_pg`, captures the PostgreSQL shop with the `postgres_cdc` source and
+writes it to `cdc/shop_pg/` in the same layout as `cdc/shop/`: row files per table under
+`cdc/shop_pg/public/<table>/`, plus `_control/`, `_schemas/` and `_offsets/`. On its first start
+it creates the replication slot `vectezium` with an exported snapshot, reads the three tables in
+that snapshot (2,220 rows), then streams every committed change. The UI shows the MySQL
+connector only; browse `cdc/shop_pg/` with Azure Storage Explorer.
+
+Make some changes as the application user:
+
+```bash
+docker compose exec postgres psql -U app -d shop -c "INSERT INTO customers (name, email, country, password_hash) VALUES ('Zoe Park', 'zoe@example.com', 'GB', repeat('0', 64))"
+docker compose exec postgres psql -U app -d shop -c "UPDATE customers SET loyalty_tier = 'gold' WHERE id = 1"
+docker compose exec postgres psql -U app -d shop -c "DELETE FROM orders WHERE id = 7"
+docker compose exec postgres psql -U app -d shop -c "ALTER TABLE products ADD COLUMN discontinued boolean DEFAULT false"
+docker compose exec postgres psql -U app -d shop -c "UPDATE products SET discontinued = true WHERE id = 3"
+```
+
+Each change lands in `cdc/shop_pg/public/<table>/` within 10 seconds. PostgreSQL does not stream
+DDL: it describes a table again before the table's next change. So the `UPDATE` after the
+`ALTER TABLE` is what brings a `schema_change` event to `_control/` (the columns added, removed or
+retyped) and a new schema document. Watch the slot with
+`docker compose exec postgres psql -U postgres -d shop -c "SELECT slot_name, confirmed_flush_lsn, wal_status FROM pg_replication_slots"`:
+`confirmed_flush_lsn` only moves to an offset that has been published to the lake.
+
+What the source needs from a server, and how it behaves:
+
+- **Server.** PostgreSQL 13 or newer with `wal_level=logical`. Set `max_slot_wal_keep_size` so a
+  stuck slot is invalidated instead of filling the disk.
+- **User.** The `REPLICATION` attribute and `SELECT` on the captured tables. With
+  `publication_autocreate_mode: filtered` (the default) it creates the publication itself, which
+  needs ownership of the tables; the demo creates it in
+  [`postgres/init/02-shop.sql`](postgres/init/02-shop.sql) and sets `disabled`.
+- **Before images.** Tables need `REPLICA IDENTITY FULL` for full `before` images. Without it,
+  updates carry no `before`, deletes only the key, and unchanged large (TOASTed) values the
+  placeholder `__debezium_unavailable_value`. The source warns at start-up.
+- **Events.** As Debezium's PostgreSQL connector: `source.connector` is `postgresql`, `source.db`
+  the database and `source.schema` the schema; types map the same way (`timestamptz` as a UTC
+  ISO-8601 string, arrays as JSON arrays, `interval` in microseconds or ISO-8601). In the record
+  format `metadata.db` is the schema, so the lake layout matches MySQL's.
+- **Offsets and the slot.** An offset is the end of a commit record. The source tells the server
+  it may discard WAL only up to the last published offset, so a source that lost its data
+  directory can always resume from the lake (`offset_recovery`). While nothing captured changes,
+  it still moves the slot on, so other databases' writes do not pile up WAL.
+- **A lost slot.** If the slot is invalidated or dropped, the source refuses to start, unless
+  `snapshot_mode: when_needed` (then the re-snapshot waits for approval with
+  `unplanned_snapshots: hold`, as for MySQL: set `"resnapshot_approved": true` in its offset
+  file).
+- **Not yet.** Incremental (chunked) snapshots, `snapshot_new_tables` and ad-hoc snapshots are
+  MySQL-only so far: a PostgreSQL table added to the publication later gets changes from then on.
 
 ## Running it against real Azure storage
 
@@ -209,11 +266,13 @@ for real, change these demo settings:
 | Path | |
 |---|---|
 | `docker-compose.yml` | The whole demo |
-| `vectezium/Dockerfile` | Builds Vectezium: Vector v0.60.0 (pinned commit) + the patch, on a distroless base |
-| `vectezium/mysql_cdc.patch` | The `mysql_cdc` source and the `azure_blob` sink options, as a patch to Vector |
+| `vectezium/Dockerfile` | Builds Vectezium: Vector v0.60.0 (pinned commit) + both patches, on a distroless base |
+| `vectezium/mysql_cdc.patch` | The `mysql_cdc` source, the shared CDC core and the `azure_blob` sink options, as a patch to Vector |
 | `vectezium/vectezium.yaml` | The connector config |
 | `vectezium/NOTICE`, `LICENSE-3rdparty-mysql_cdc.csv` | Notices for Vectezium (see [Licence](#licence)) |
 | `mysql/init/` | Users and the seeded `shop` database (runs on the first start) |
+| `postgres/init/` | The PostgreSQL users, shop and publication (runs on the first start) |
+| `vectezium/postgres_cdc.patch` | The `postgres_cdc` source, as a patch on top of `mysql_cdc.patch` |
 | `ui/` | The web UI (FastAPI) and its sign-in (`auth.py`), plus `init_storage.py` and `resnapshot.py` |
 | `scripts/` | `changes.sh`, `simulate.sh`, `snapshot.sh`, `add-table.sh`, `lose-offsets.sh`, `reset.sh` |
 | `docs/` | The screenshot above |
