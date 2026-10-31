@@ -517,11 +517,24 @@ def captured_by_config(rules, name):
 
 
 def read_signals(folder, newest=None):
-    """The signal files in a folder, oldest first (or the newest `newest`, newest first)."""
+    """The signal files in a folder, oldest first (or the newest `newest`, newest first).
+
+    Vectezium names processed signals `<12-digit seq>-<name>` in the order it applied them
+    (older, unnumbered ones first) and applies pending signals in the order they were written."""
     try:
-        names = sorted(n for n in os.listdir(folder) if n.endswith(".json") and not n.startswith("."))
+        names = [n for n in os.listdir(folder) if n.endswith(".json") and not n.startswith(".")]
     except FileNotFoundError:
         return []
+
+    def order(name):
+        if folder.name == "processed":
+            return (re.match(r"\d{12}-", name) is not None, name)
+        try:
+            return ((folder / name).stat().st_mtime, name)
+        except OSError:
+            return (0, name)
+
+    names.sort(key=order)
     if newest:
         names = names[::-1][:newest]
     signals = []
