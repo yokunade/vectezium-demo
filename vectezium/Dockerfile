@@ -8,7 +8,7 @@
 # jemalloc) plus the file sink, which the demo uses to feed the live view in the UI.
 
 ARG VECTEZIUM_REPO=https://github.com/yokunade/Vectezium.git
-ARG VECTEZIUM_COMMIT=5cf9034c7423c6c152ab7086820e32757645fcda
+ARG VECTEZIUM_COMMIT=befab0168ff6a38fb547d7e1a6b14a87adf6c24c
 
 FROM rust:1.96.1-trixie@sha256:1f0dbad1df66647807e6952d1db85d0b2bda7606cb2139d82517e4f009967376 AS build
 RUN apt-get update \
@@ -38,17 +38,18 @@ RUN mkdir -p /doc \
  && echo "${VECTEZIUM_REPO%.git}/tree/${VECTEZIUM_COMMIT}" > /doc/SOURCE \
  && chmod 644 /doc/*
 
-# Empty, writable directories for state and the live event file, owned by nonroot (the runtime
-# image has no shell to create them).
+# Empty, writable directories for state, the live event files and the signal folders, owned by
+# nonroot (the runtime image has no shell to create them).
 FROM gcr.io/distroless/cc-debian13:debug-nonroot@sha256:1b89bf5fd2bce2d4bd25bcf083c6da90178d2cd06bfb75dc3a66bc5c3eb6c3e7 AS dirs
 SHELL ["/busybox/sh", "-c"]
-RUN mkdir -p /tmp/out/var/lib/vectezium /tmp/out/var/log/vectezium
+RUN mkdir -p /tmp/out/var/lib/vectezium /tmp/out/var/log/vectezium /tmp/out/signals
 
 # A minimal runtime base: glibc, CA certificates, no shell, runs as nonroot (65532).
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
 ARG VECTEZIUM_COMMIT
 COPY --from=dirs --chown=65532:65532 /tmp/out/var/lib/vectezium /var/lib/vectezium
 COPY --from=dirs --chown=65532:65532 /tmp/out/var/log/vectezium /var/log/vectezium
+COPY --from=dirs --chown=65532:65532 /tmp/out/signals /signals
 COPY --from=build /vectezium /usr/local/bin/vectezium
 COPY --from=build /doc /usr/share/doc/vectezium
 LABEL org.opencontainers.image.title="Vectezium" \

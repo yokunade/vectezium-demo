@@ -59,12 +59,13 @@ function replay(node, cls) {
   node.addEventListener("animationend", () => node.classList.remove(cls), { once: true });
 }
 
-function toast(text) {
+function toast(text, error = false) {
   const node = $("#toast");
-  node.replaceChildren(icon("check"), text);
+  node.replaceChildren(icon(error ? "x" : "check"), text);
+  node.classList.toggle("error", error);
   node.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => node.classList.remove("show"), 1800);
+  toast.timer = setTimeout(() => node.classList.remove("show"), error ? 4000 : 1800);
 }
 
 // The sticky table headers sit just below the header, whatever its height.
@@ -861,6 +862,167 @@ async function loadRows({ connector, table }) {
 $("#db-refresh").addEventListener("click", loadTables);
 tabLoaders.db = loadTables;
 
+// ------------------------------------------------------------------------------------ snapshots
+
+// Each table's snapshot state, per connector, and the signals sent to Vectezium. A request is a
+// signal file Vectezium applies within a couple of seconds (see /api/snapshots in app.py).
+const snaps = { timer: null };
+
+// state → [label, badge class, explanation]
+const SNAP_STATES = {
+  snapshotted: ["snapshotted", "c", "All its rows have been read (or it was created while captured)"],
+  snapshotting: ["snapshotting", "r", "Its rows are being read, in chunks, while changes stream"],
+  queued: ["queued", "pending", "Waits for the tables before it"],
+  held: ["held", "u", "Its rows need reading, but Vectezium waits for an operator (unplanned_snapshots: hold)"],
+  new: ["redeploy to capture", "u", "In table_include_list, but the running Vectezium started before it was added"],
+  not_captured: ["not captured", "offset", "Not in the connector's table_include_list"],
+  unknown: ["unknown", "offset", "Nothing published yet"],
+};
+const SIGNAL_NAMES = {
+  "execute-snapshot": "snapshot", "stop-snapshot": "stop", "dismiss-held": "dismiss", "approve-resnapshot": "approve re-snapshot",
+};
+const BUSY = new Set(["snapshotting", "queued"]);
+const CAPTURED = new Set(["snapshotted", "snapshotting", "queued", "held"]);
+
+async function loadSnapshots() {
+  const gen = view.gen;
+  const results = await Promise.all(view.connectors.map(async (c) => {
+    try { return { c, data: await (await fetch(api("/api/snapshots", {}, c.id))).json() }; } catch { return { c, data: null }; }
+  }));
+  if (stale(gen)) return;
+  // Keep the open "how to capture" hints open across refreshes.
+  const open = new Set($$("#snap-connectors details[open]").map((d) => d.dataset.key));
+  $("#snap-connectors").replaceChildren(...results.map(({ c, data }) => data?.tables
+    ? snapshotPanel(c, data, open)
+    : h("div", { class: "snap-panel empty" }, `${c.label}: the snapshot state could not be loaded.`)));
+}
+
+function scheduleSnapshots() {
+  clearInterval(snaps.timer);
+  if (!$("#snap-auto").checked) return;
+  snaps.timer = setInterval(() => {
+    if (!document.hidden && $("#tab-snapshots").classList.contains("active")) loadSnapshots();
+  }, 3000);
+}
+
+async function sendSignal(c, action, tables, question) {
+  if (question && !confirm(question)) return;
+  const response = await fetch("/api/snapshots", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connector: c.id, action, tables }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) { toast(`Not sent: ${body.detail ?? response.statusText}`, true); return; }
+  toast(`Sent to ${c.label}: ${SIGNAL_NAMES[body.type] ?? body.type}${tables.length ? ` ${tables.join(", ")}` : ""}`);
+  loadSnapshots();
+}
+
+/** The table names a signal names, without the schema. */
+const signalTables = (s) => (s.data?.["data-collections"] ?? []).map((n) => n.slice(n.indexOf(".") + 1));
+
+function snapshotPanel(c, data, open) {
+  const requested = new Set(data.pending.flatMap(signalTables));
+  const off = !data.signals_enabled;
+  const button = (label, action, tables, { primary, question, title } = {}) => h("button", {
+    class: `btn${primary ? " primary" : ""}`, disabled: off, title,
+    onclick: () => sendSignal(c, action, tables, question),
+  }, label);
+
+  const captured = data.tables.filter((t) => CAPTURED.has(t.state));
+  const idle = captured.filter((t) => !BUSY.has(t.state)).map((t) => t.name);
+  const busy = captured.filter((t) => BUSY.has(t.state)).map((t) => t.name);
+  const head = h("div", { class: "snap-head" },
+    h("h3", {}, `${c.label} `, h("span", { class: "muted" }, `${c.name} · schema ${data.schema}`)),
+    h("span", { class: "spacer" }),
+    idle.length > 1 && button("Snapshot all", "snapshot", idle,
+      { question: `Read every row of ${idle.length} ${c.label} tables again (${idle.join(", ")})?` }),
+    busy.length > 0 && button("Stop all", "stop", [],
+      { question: `Stop the ${c.label} snapshot? Rows already read stay in the lake; the tables get no "snapshot completed" event.` }));
+
+  const notices = [];
+  if (off) {
+    notices.push(h("div", { class: "banner" }, h("strong", {}, "Signals are off"), ` for ${c.label}: Vectezium has not created `,
+      h("code", {}, `/signals/${c.id}/pending`), ". Set ", h("code", {}, "signals.folder"),
+      " for this source in vectezium/vectezium.yaml and redeploy it."));
+  }
+  if (data.waiting) {
+    notices.push(h("div", { class: "banner" },
+      h("strong", {}, "Waiting for approval: "), `${data.waiting.reason}. Vectezium holds the lock and streams nothing until you approve the full re-snapshot. `,
+      button("Approve re-snapshot", "approve", [], {
+        primary: true,
+        question: `Approve reading every captured ${c.label} table again? Downstream gets every row again (op r).`,
+      })));
+  }
+
+  const rows = data.tables.map((t) => {
+    const [label, cls, why] = SNAP_STATES[t.state] ?? [t.state, "offset", ""];
+    const pending = requested.has(t.name);
+    const state = h("td", {}, h("span", { class: `badge ${cls}`, title: why }, label),
+      pending && h("span", { class: "badge pending", title: "A signal for this table waits in Vectezium's signal folder" }, "requested"));
+    let progress = "";
+    if (t.state === "snapshotting") {
+      const share = t.rows ? Math.min(1, t.read / t.rows) : 0;
+      const bar = h("span");
+      bar.style.width = `${Math.round(share * 100)}%`;
+      progress = h("div", { class: "snap-progress", title: "Rows read so far, against the database's row estimate" },
+        h("div", { class: "progress" }, bar), h("span", { class: "muted" }, `${t.read.toLocaleString()} rows`));
+    } else if (t.state === "queued") {
+      progress = h("span", { class: "muted" }, `#${t.position} in the queue`);
+    }
+    const actions = h("div", { class: "snap-actions" });
+    const q = (what) => `${what} ${c.schema}.${t.name} (${c.label})?`;
+    if (t.state === "snapshotted") actions.append(button("Snapshot", "snapshot", [t.name], { question: q("Read every row of") }));
+    if (t.state === "held") {
+      actions.append(button("Snapshot", "snapshot", [t.name], { primary: true, title: "Release the held snapshot: read its rows now" }),
+        button("Dismiss", "dismiss", [t.name], { question: q("Mark as snapshotted, without reading its rows,"), title: "Treat it as complete: its rows are not read" }));
+    }
+    if (BUSY.has(t.state)) actions.append(button("Stop", "stop", [t.name], { question: q("Stop the snapshot of") }));
+    if (t.state === "not_captured" || t.state === "new") actions.append(captureHint(c, t, open));
+    return h("tr", {}, h("td", { class: "mono" }, t.name), h("td", { class: "num muted" }, `~${t.rows.toLocaleString()}`),
+      state, h("td", {}, progress), h("td", {}, actions));
+  });
+
+  const signals = [...data.pending.map((s) => ({ ...s, status: "pending" })), ...data.processed.map((s) => ({ ...s, status: s.result?.status ?? "?" }))];
+  const signalRows = signals.map((s) => h("tr", {},
+    h("td", { class: "muted" }, s.sent_at ? new Date(s.sent_at).toLocaleString([], { hour12: false }) : ""),
+    h("td", {}, SIGNAL_NAMES[s.type] ?? s.type ?? "?"),
+    h("td", { class: "mono" }, signalTables(s).join(", ") || (s.type === "stop-snapshot" ? "all" : "")),
+    h("td", { class: "muted" }, s.sent_by ?? ""),
+    h("td", {}, h("span", { class: `badge ${{ applied: "c", rejected: "d", pending: "pending" }[s.status] ?? "offset"}` }, s.status),
+      " ", h("span", { class: "muted" }, s.result?.message ?? (s.status === "pending" ? "waiting for Vectezium" : "")))));
+
+  return h("section", { class: "snap-panel" }, head, ...notices,
+    h("div", { class: "scroll" }, h("table", { class: "grid snap-tables" },
+      h("thead", {}, h("tr", {}, ["Table", "Rows", "State", "Progress", ""].map((col) => h("th", {}, col)))),
+      h("tbody", {}, rows))),
+    h("h4", {}, "Signals"),
+    signals.length
+      ? h("div", { class: "scroll" }, h("table", { class: "grid" },
+        h("thead", {}, h("tr", {}, ["Sent", "Request", "Tables", "By", "Result"].map((col) => h("th", {}, col)))),
+        h("tbody", {}, signalRows)))
+      : h("div", { class: "muted small" }, "None sent yet."));
+}
+
+/** How to capture a table: add it to the include list and redeploy (the UI does not change config). */
+function captureHint(c, t, open) {
+  const key = `${c.id}|${t.name}`;
+  const line = `      - '${c.schema}\\.${t.name}'`;
+  const steps = t.state === "new"
+    ? [h("p", {}, "It is in ", h("code", {}, "table_include_list"), " already. Redeploy Vectezium; it snapshots the table on start:"),
+      h("pre", {}, "docker compose up -d --force-recreate vectezium")]
+    : [h("p", {}, "Add it to the ", h("code", {}, c.id), " source's ", h("code", {}, "table_include_list"), " in vectezium/vectezium.yaml:"),
+      h("pre", {}, line),
+      h("p", {}, "then redeploy Vectezium; it snapshots the table on start:"),
+      h("pre", {}, "docker compose up -d --force-recreate vectezium")];
+  return h("details", { class: "snap-hint", "data-key": key, open: open.has(key) },
+    h("summary", {}, "How to capture"), ...steps);
+}
+
+$("#snap-refresh").addEventListener("click", loadSnapshots);
+$("#snap-auto").addEventListener("change", scheduleSnapshots);
+$("#held-open").addEventListener("click", (event) => { event.preventDefault(); showTab("snapshots"); });
+tabLoaders.snapshots = () => { loadSnapshots(); scheduleSnapshots(); };
+
 // ------------------------------------------------------------------------------------- licences
 
 let licencesLoaded = false;
@@ -950,6 +1112,7 @@ function setConnector(choice) {
   $("#db-tables").replaceChildren();
   $("#db-rows").replaceChildren();
   showHeldSnapshots([]);
+  $("#snap-connectors").replaceChildren();
   $("#lock-pill").textContent = "lock: ?";
   $("#lock-pill").className = "pill";
 
@@ -991,8 +1154,8 @@ addEventListener("keydown", (event) => {
     }
     return;
   }
-  const tabs = ["live", "lake", "db", "licences"];
-  if (event.key >= "1" && event.key <= "4") showTab(tabs[event.key - 1]);
+  const tabs = ["live", "lake", "db", "snapshots", "licences"];
+  if (event.key >= "1" && event.key <= "5") showTab(tabs[event.key - 1]);
   else if (event.key === "/") { event.preventDefault(); showTab("live"); $("#f-text").focus(); }
   else if (event.key === "p" || event.key === "P") togglePause();
   else if (event.key === "t" || event.key === "T") nextTheme();

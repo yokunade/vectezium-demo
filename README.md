@@ -98,9 +98,12 @@ it, meaning its file has been written. Files are written every 10 seconds.
 
 ### b) An ad-hoc incremental snapshot
 
+Open the **Snapshots** tab in the UI and press **Snapshot** on a table, or use the script:
+
 ```bash
 ./scripts/snapshot.sh shop.products            # one or more tables
 ./scripts/snapshot.sh --all
+./scripts/snapshot.sh --stop                   # drop tables (none named: all) from the queue
 ./scripts/snapshot.sh --dismiss shop.orders    # a held table: mark it as snapshotted instead
 ```
 
@@ -108,11 +111,22 @@ The table's current rows are read again in chunks of 250, as `snapshot` events (
 `metadata.snapshot: "incremental"`), while changes keep streaming. Each table ends with a
 `snapshot completed` control event.
 
-Vectezium does not take snapshot requests while it runs (it has no Debezium-style signal table).
-It keeps the list of tables it has snapshotted in its offset file, and on start it snapshots
-every captured table missing from that list. So the script stops Vectezium, which stores its last
-acknowledged offset and releases its lock first. It then removes the tables from that list
-([`ui/resnapshot.py`](ui/resnapshot.py)) and starts Vectezium again.
+Nothing restarts. Vectezium takes requests while it runs from a signal folder per connector
+(`signals` in [`vectezium/vectezium.yaml`](vectezium/vectezium.yaml)): Debezium's file signal
+channel, with Debezium's `execute-snapshot` and `stop-snapshot` signals plus two of its own,
+`dismiss-held` and `approve-resnapshot`. The UI and the script write one file per request to
+`pending/`, for example:
+
+```json
+{"id": "…", "type": "execute-snapshot", "data": {"data-collections": ["shop.products"], "type": "incremental"}}
+```
+
+Within two seconds Vectezium applies it between transactions, records it in its offset, and moves
+the file to `processed/` with its result (`applied: queued shop.products`, or `rejected` and why).
+The Snapshots tab lists each table's state (snapshotted, snapshotting with its progress, queued,
+held, not captured) and the signals sent, with their results. The signal folder needs no database
+access: in Azure it can be an Azure Files share. When Vectezium is stopped, `snapshot.sh` edits
+its offset file instead ([`ui/resnapshot.py`](ui/resnapshot.py)), and the next start acts on it.
 
 ### c) Add a new table and redeploy
 
@@ -120,10 +134,11 @@ acknowledged offset and releases its lock first. It then removes the tables from
 ./scripts/add-table.sh             # creates shop.reviews; or ./scripts/add-table.sh <name>
 ```
 
-The script adds a table the way you would in a real deployment:
+The script adds a table the way you would in a real deployment, the same way for both
+connectors:
 
 1. Create the table, with 300 rows. Vectezium ignores it because it is not in the connector's
-   `table_include_list`.
+   `table_include_list`. (The Snapshots tab lists it as *not captured*, with the line to add.)
 2. Add it to `table_include_list` in [`vectezium/vectezium.yaml`](vectezium/vectezium.yaml).
 3. Redeploy Vectezium, which starts a new container with the new config. Vectezium finds a
    captured table it has never snapshotted and snapshots it incrementally
@@ -158,18 +173,20 @@ At start, with no stored offset, Vectezium decides like this:
 ### Snapshots nobody asked for
 
 `unplanned_snapshots: hold` keeps Vectezium from re-reading tables without warning. Snapshots
-you ask for run as usual: the first start, `add-table.sh` and `snapshot.sh`. Two other cases
-wait for you:
+you ask for run as usual: the first start, `add-table.sh`, the Snapshots tab and `snapshot.sh`.
+Two other cases wait for you:
 
 - **The binlog was purged** past Vectezium's offset (`snapshot_mode: when_needed`). Every table
-  would have to be read again, so Vectezium refuses to start and says why.
-  `./scripts/snapshot.sh --all` approves the re-snapshot.
+  would have to be read again, so Vectezium waits for an approval before it streams anything,
+  and the Snapshots tab shows why with an **Approve re-snapshot** button
+  (or `./scripts/snapshot.sh --approve`).
 - **A table's snapshot state was lost**, for example after recovering from a `latest.json`
   written before `checkpoint` existed. Vectezium streams the table's changes but does not read
   its existing rows. It lists the table in `held_tables` of its offset file, logs a warning,
-  sends a `snapshot held` control event, and the UI shows a banner. Release it with
-  `./scripts/snapshot.sh shop.<table>` (snapshot it) or
-  `./scripts/snapshot.sh --dismiss shop.<table>` (mark it as complete without reading it).
+  sends a `snapshot held` control event, and the UI shows a banner. Release it on the Snapshots
+  tab with **Snapshot** (read its rows) or **Dismiss** (mark it as complete without reading
+  them), or with `./scripts/snapshot.sh shop.<table>` and
+  `./scripts/snapshot.sh --dismiss shop.<table>`.
 
 ### Start over
 
@@ -226,9 +243,11 @@ it reads the three tables (2,220 rows) in chunks of 250: an incremental snapshot
 connector's. Switch the UI to **PostgreSQL** to watch it.
 
 Every script in [Things to try](#things-to-try) works on it with `--connector postgres`.
-`simulate.sh` also appends tags to the customers' `tags` array, and `add-table.sh` adds the new
-table to the publication `vectezium` (as the superuser: the publication is the DBA's) instead of
-editing the config. Or make changes by hand as the application user:
+`simulate.sh` also appends tags to the customers' `tags` array. The publication `vectezium`
+covers the whole `public` schema (`FOR TABLES IN SCHEMA public`), so, as for MySQL, the source's
+`table_include_list` decides which tables are captured, and `add-table.sh` adds a table there.
+A table in the schema needs a primary key or a replica identity for updates and deletes, since
+it is published. Or make changes by hand as the application user:
 
 ```bash
 ./scripts/changes.sh --connector postgres insert 2
@@ -266,15 +285,14 @@ What the source needs from a server, and how it behaves:
   it still moves the slot on, so other databases' writes do not pile up WAL.
 - **A lost slot.** If the slot is invalidated or dropped, the source refuses to start, unless
   `snapshot_mode: when_needed` (then the re-snapshot waits for approval with
-  `unplanned_snapshots: hold`, as for MySQL: set `"resnapshot_approved": true` in its offset
-  file).
+  `unplanned_snapshots: hold`, as for MySQL: approve it on the Snapshots tab).
 - **Snapshots.** `snapshot_strategy: blocking` reads every table in the slot's exported snapshot
   before streaming. `incremental` (the demo's) streams at once and reads tables in key order, in
   chunks, each one short transaction: Debezium's read-only incremental snapshot, using
   `pg_current_snapshot()` to tell which streamed changes are newer than a chunk. Tables need a
-  primary key (or `pk_override`). With `snapshot_new_tables: true`, a table added to the
-  publication later is snapshotted the same way when the source next starts, and so is a table
-  queued for an ad-hoc snapshot:
+  primary key (or `pk_override`). With `snapshot_new_tables: true`, a table added to
+  `table_include_list` later is snapshotted the same way when the source next starts. Ad-hoc
+  snapshots work as for MySQL, from the Snapshots tab or:
 
   ```bash
   ./scripts/snapshot.sh --connector postgres public.products
@@ -319,7 +337,9 @@ Azurite stay local either way.
 Vectezium's MySQL user can read only the `shop` database, plus the server-wide replication
 privileges it needs ([`mysql/init/01-users.sql`](mysql/init/01-users.sql)). The init scripts run
 only when a database volume is first created, so a demo set up before this change keeps its old
-grants until `./scripts/reset.sh`.
+grants until `./scripts/reset.sh`. The same goes for the PostgreSQL publication, which now covers
+the whole schema; to change it in place, run
+`docker compose exec postgres psql -U postgres -d shop -c "ALTER PUBLICATION vectezium SET TABLES IN SCHEMA public"`.
 
 ## Licence
 

@@ -69,5 +69,7 @@ FROM generate_series(1, 1500) i;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO vectezium;
 RESET ROLE;
 
--- The publication the source streams (created by the DBA: it needs CREATE on the database).
-CREATE PUBLICATION vectezium FOR TABLE customers, products, orders;
+-- The publication the source streams (created by the DBA: it needs CREATE on the database, and
+-- superuser for a whole schema). It covers every table in the schema, now and later; the source's
+-- table_include_list decides which are captured, as for MySQL.
+CREATE PUBLICATION vectezium FOR TABLES IN SCHEMA public;

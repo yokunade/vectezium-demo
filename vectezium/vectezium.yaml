@@ -53,6 +53,10 @@ sources:
     # Snapshots nobody asked for (all tables after a purged binlog; tables whose snapshot state
     # was lost) wait for an operator: see scripts/snapshot.sh.
     unplanned_snapshots: hold
+    # Requests while running: ad-hoc snapshots, held snapshots, approvals (the UI's Snapshots tab
+    # and scripts/snapshot.sh write them here).
+    signals:
+      folder: /signals/mysql
     snapshot_locking_mode: none
     decimal_handling_mode: string
     event_format: record
@@ -90,12 +94,20 @@ sources:
     publication_name: vectezium
     publication_autocreate_mode: disabled
     schema_include_list: ["public"]
+    # Captured tables, as for MySQL: the publication covers the whole schema, so this list decides.
+    table_include_list:
+      - 'public\.customers'
+      - 'public\.products'
+      - 'public\.orders'
+      # scripts/add-table.sh adds tables above this line
     column_exclude_list: ['public\.customers\.password_hash']
     snapshot_mode: when_needed        # snapshot on first start (and if the slot was invalidated)
     snapshot_strategy: incremental    # snapshot in chunks while streaming: no long transactions
     incremental_snapshot_chunk_size: 250
-    snapshot_new_tables: true         # tables added to the publication later, and ad-hoc snapshots
+    snapshot_new_tables: true         # tables added to table_include_list later
     unplanned_snapshots: hold
+    signals:
+      folder: /signals/postgres
     decimal_handling_mode: string
     event_format: record
     record_images: before_and_after

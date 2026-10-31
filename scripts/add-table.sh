@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Adds a new table to the capture, the way it is done in a real deployment: create the table, add it to
-# what the connector captures, redeploy.
+# what the connector captures, redeploy. The same steps for both connectors.
 #
 #   ./scripts/add-table.sh [name]                        default name: reviews
 #   ./scripts/add-table.sh --connector postgres [name]   in the PostgreSQL shop
 #
 # 1. Creates <schema>.<name> with 300 rows. Vectezium ignores it: it is not captured yet.
-# 2. MySQL: adds it to table_include_list in vectezium/vectezium.yaml.
-#    PostgreSQL: adds it to the publication `vectezium` (as the superuser: the publication is the
-#    DBA's); the table gets REPLICA IDENTITY FULL and Vectezium's user SELECT on it.
+#    PostgreSQL: the table also gets REPLICA IDENTITY FULL and Vectezium's user SELECT on it (the
+#    publication covers the whole schema, so it is published already).
+# 2. Adds it to the connector's table_include_list in vectezium/vectezium.yaml.
 # 3. Redeploys Vectezium (a new container with the current config). On start, Vectezium finds a
 #    captured table it has never snapshotted and snapshots it incrementally (snapshot_new_tables),
 #    while it keeps streaming the other tables.
@@ -23,14 +23,8 @@ if ! [[ $TABLE =~ ^[a-z][a-z0-9_]{0,40}$ ]]; then
   echo "Table name: lowercase letters, digits and underscores" >&2
   exit 1
 fi
-if [ "$CONNECTOR" = mysql ]; then
-  if grep -q "'shop\\\\.$TABLE'" "$CONFIG"; then
-    echo "shop.$TABLE is already in $CONFIG" >&2
-    exit 1
-  fi
-elif [ -n "$(psql_admin --no-align --tuples-only -c "SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'vectezium' AND schemaname = 'public' AND tablename = '$TABLE'")" ]; then
-  echo "public.$TABLE is already in the publication vectezium" >&2
+if grep -q "'$SCHEMA\\\\.$TABLE'" "$CONFIG"; then
+  echo "$SCHEMA.$TABLE is already in $CONFIG" >&2
   exit 1
 fi
 
@@ -70,20 +64,15 @@ SELECT COUNT(*) AS rows_in_$TABLE FROM $TABLE;
 SQL
 fi
 
-if [ "$CONNECTOR" = mysql ]; then
-  say "2. Adding shop.$TABLE to table_include_list in $CONFIG"
-  awk -v marker="$MARKER" -v line="      - 'shop\\\\.$TABLE'   # added by scripts/add-table.sh" \
-    'index($0, marker) { print line } { print }' "$CONFIG" > "$CONFIG.tmp"
-  cat "$CONFIG.tmp" > "$CONFIG"   # rewrite in place: the file is bind-mounted into the container
-  rm -f "$CONFIG.tmp"
-  grep -n -A7 "table_include_list:" "$CONFIG"
-else
-  say "2. Adding public.$TABLE to the publication vectezium"
-  psql_admin --set=ON_ERROR_STOP=1 <<SQL
-ALTER PUBLICATION vectezium ADD TABLE public.$TABLE;
-SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = 'vectezium' ORDER BY 2;
-SQL
-fi
+say "2. Adding $SCHEMA.$TABLE to the $SOURCE source's table_include_list in $CONFIG"
+# Above the marker line in this connector's source: each source has one.
+awk -v marker="$MARKER" -v source="  $SOURCE:" -v line="      - '$SCHEMA\\\\.$TABLE'   # added by scripts/add-table.sh" \
+  '/^  [a-z_]+:$/ { current = $0 } index($0, marker) && current == source { print line } { print }' \
+  "$CONFIG" > "$CONFIG.tmp"
+cat "$CONFIG.tmp" > "$CONFIG"   # rewrite in place: the file is bind-mounted into the containers
+rm -f "$CONFIG.tmp"
+awk -v source="  $SOURCE:" '/^  [a-z_]+:$/ { current = $0 }
+  current == source && /table_include_list:/ { on = 1 } on { print } on && index($0, "add-table.sh adds") { on = 0 }' "$CONFIG"
 
 say "3. Redeploying Vectezium"
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)

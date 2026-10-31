@@ -9,6 +9,8 @@ for either connector: `shop` (MySQL) or `shop_pg` (PostgreSQL).
   /api/lake/blob       one blob's content (gunzipped), parsed as NDJSON
   /api/db/tables       the source database's captured schema: its tables and their row counts
   /api/db/rows         the first rows of one table
+  /api/snapshots       each table's snapshot state and the signals sent to Vectezium (GET);
+                       sends a signal: snapshot, stop, dismiss a held snapshot, approve (POST)
   /api/licences        Vectezium's licence, notice and the crates its CDC sources add
   /api/auth/*          sign-in, password change and sign-out (auth.py)
 
@@ -24,12 +26,16 @@ import datetime
 import decimal
 import json
 import os
+import re
+import time
+import uuid
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
 import pg8000.native
 import pymysql
+import yaml
 from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobPrefix, BlobServiceClient
 from fastapi import FastAPI, HTTPException, Request
@@ -43,6 +49,10 @@ CONTAINER = os.environ.get("LAKE_CONTAINER", "raw")
 BACKLOG_BYTES = 2_000_000
 MAX_PREVIEW_LINES = 5000
 LICENCES = Path(os.environ.get("LICENCES_DIR", "/licences"))
+# Vectezium's signal folders (one per source, see vectezium.yaml), and its config, for the tables
+# each source captures.
+SIGNALS = Path(os.environ.get("SIGNALS_DIR", "/signals"))
+VECTEZIUM_CONFIG = Path(os.environ.get("VECTEZIUM_CONFIG", "/config/vectezium.yaml"))
 
 # live.ndjson is cut back to its newest LIVE_KEEP_BYTES once it grows past LIVE_MAX_BYTES, so it
 # stays small however much is captured. A browser is sent at most STREAM_CHUNK_BYTES at a time,
@@ -300,15 +310,20 @@ def split_lines(data):
 
 # ------------------------------------------------------------------------------- the lake
 
+def published_offset(c):
+    """The connector's last published offset (`_offsets/latest.json`), or None."""
+    try:
+        text = lake.get_blob_client(c.root + "_offsets/latest.json").download_blob().readall()
+        return json.loads(text.splitlines()[0])
+    except (ResourceNotFoundError, IndexError, ValueError):
+        return None
+
+
 @app.get("/api/status")
 def status(connector: str = "mysql"):
-    root = get_connector(connector).root
-    result = {"offset": None, "lock": None}
-    try:
-        text = lake.get_blob_client(root + "_offsets/latest.json").download_blob().readall()
-        result["offset"] = json.loads(text.splitlines()[0])
-    except (ResourceNotFoundError, IndexError, ValueError):
-        pass
+    c = get_connector(connector)
+    root = c.root
+    result = {"offset": published_offset(c), "lock": None}
     try:
         lease = lake.get_blob_client(root + "_lock").get_blob_properties().lease
         result["lock"] = {"state": lease.state, "status": lease.status}
@@ -468,6 +483,174 @@ def db_rows(table: str, limit: int = 100, connector: str = "mysql"):
         columns = [col["name"] for col in conn.columns]
     rows = [{k: jsonable(v) for k, v in zip(columns, row)} for row in result]
     return {"table": table, "key": key, "columns": columns, "rows": rows}
+
+
+# ------------------------------------------------------------------------------- snapshots
+
+# Vectezium takes these requests from files in its signal folder while it runs (Debezium's file
+# signal channel): the UI writes one file per request to pending/; Vectezium applies it within a
+# couple of seconds and moves it to processed/ with its result.
+SIGNAL_TYPES = {
+    "snapshot": "execute-snapshot",     # read the tables' rows again (also releases a held table)
+    "stop": "stop-snapshot",            # drop tables (none given: all) from the snapshot queue
+    "dismiss": "dismiss-held",          # mark held tables as snapshotted, without reading them
+    "approve": "approve-resnapshot",    # approve the full re-snapshot Vectezium is waiting for
+}
+TABLE_NAME = re.compile(r"[A-Za-z0-9_$]{1,64}")
+
+
+def capture_rules(c):
+    """The table include and exclude lists of the connector's source in vectezium.yaml."""
+    try:
+        source = yaml.safe_load(VECTEZIUM_CONFIG.read_text())["sources"][c.id]
+    except (OSError, KeyError, TypeError, yaml.YAMLError):
+        return None
+    return {key: source.get(key) or [] for key in ("table_include_list", "table_exclude_list")}
+
+
+def captured_by_config(rules, name):
+    """Whether the lists capture <schema>.<table>. As in Vectezium, a pattern must match the whole
+    name, and an include list wins over an exclude list."""
+    if rules["table_include_list"]:
+        return any(re.fullmatch(p, name) for p in rules["table_include_list"])
+    return not any(re.fullmatch(p, name) for p in rules["table_exclude_list"])
+
+
+def read_signals(folder, newest=None):
+    """The signal files in a folder, oldest first (or the newest `newest`, newest first)."""
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".json") and not n.startswith("."))
+    except FileNotFoundError:
+        return []
+    if newest:
+        names = names[::-1][:newest]
+    signals = []
+    for name in names:
+        try:
+            body = json.loads((folder / name).read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(body, dict):
+            signals.append({**body, "name": name})
+    return signals
+
+
+@app.get("/api/snapshots")
+def snapshots(connector: str = "mysql"):
+    """Each table of the connector's schema with its snapshot state, from the published offset
+    (so up to offset_publish_interval_secs old) and vectezium.yaml:
+
+      not_captured   not in the source's include list
+      new            in the include list but unknown to the running source: redeploy Vectezium
+      held           its rows need reading, but Vectezium waits for an operator
+      snapshotting   its rows are being read (`read`: rows so far)
+      queued         waiting for the tables before it
+      snapshotted    all its rows were read (or it was created while captured)
+      unknown        nothing published yet
+    """
+    c = get_connector(connector)
+    tables = db_tables(connector)["tables"]
+    offset = published_offset(c)
+    checkpoint = (offset or {}).get("checkpoint") or {}
+
+    def names(refs):
+        return [f"{db}.{table}" for db, table in refs or []]
+
+    snapshotted = set(names(checkpoint.get("snapshotted_tables")))
+    held = set(names(checkpoint.get("held_tables")))
+    incremental = checkpoint.get("incremental") or {}
+    queue = names(incremental.get("tables"))
+    rules = capture_rules(c)
+
+    result = []
+    for t in tables:
+        name = f"{c.schema}.{t['name']}"
+        entry = {"name": t["name"], "rows": t["rows"]}
+        if rules is not None and not captured_by_config(rules, name):
+            entry["state"] = "not_captured"
+        elif name in held:
+            entry["state"] = "held"
+        elif queue[:1] == [name]:
+            entry.update(state="snapshotting", read=incremental.get("rows", 0))
+        elif name in queue:
+            entry.update(state="queued", position=queue.index(name))
+        elif name in snapshotted:
+            entry["state"] = "snapshotted"
+        else:
+            entry["state"] = "unknown" if offset is None else "new"
+        result.append(entry)
+
+    folder = SIGNALS / c.id
+    try:
+        waiting = json.loads((folder / "waiting.json").read_text())
+    except (OSError, ValueError):
+        waiting = None
+    return {
+        "schema": c.schema,
+        "tables": result,
+        "published_at": (offset or {}).get("committed_at"),
+        "signals_enabled": (folder / "pending").is_dir(),
+        "waiting": waiting,
+        "pending": read_signals(folder / "pending"),
+        "processed": read_signals(folder / "processed", newest=20),
+    }
+
+
+def same_origin(request: Request):
+    """Refuses requests a browser sends on another site's behalf. The session cookie is
+    SameSite=Strict already; this also covers browsers that ignore that."""
+    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+        raise HTTPException(400, "cross-site request")
+    origin = request.headers.get("origin")
+    if origin and origin.split("://", 1)[-1] != request.headers.get("host"):
+        raise HTTPException(400, "cross-origin request")
+    if not request.headers.get("content-type", "").startswith("application/json"):
+        raise HTTPException(415, "send JSON")
+
+
+@app.post("/api/snapshots")
+async def send_signal(request: Request):
+    """Writes a signal for the connector's source: {"connector", "action", "tables"}, where
+    `tables` are names in the connector's schema."""
+    same_origin(request)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(400, "send a JSON object")
+    c = get_connector(body.get("connector", "mysql"))
+    action = body.get("action")
+    if action not in SIGNAL_TYPES:
+        raise HTTPException(400, f"action: one of {', '.join(SIGNAL_TYPES)}")
+    tables = body.get("tables") or []
+    if not isinstance(tables, list) or not all(isinstance(t, str) and TABLE_NAME.fullmatch(t) for t in tables):
+        raise HTTPException(400, "tables: a list of table names, without the schema")
+    if action in ("snapshot", "dismiss") and not tables:
+        raise HTTPException(400, f"{action} needs tables")
+    if tables:
+        existing = {t["name"] for t in (await asyncio.to_thread(db_tables, c.id))["tables"]}
+        if missing := [t for t in tables if t not in existing]:
+            raise HTTPException(404, f"no table {', '.join(missing)} in {c.schema}")
+    pending = SIGNALS / c.id / "pending"
+    if not pending.is_dir():
+        raise HTTPException(503, f"no signal folder for {c.label}: Vectezium creates it when it "
+                                 "starts with `signals` configured")
+
+    sent_at = int(time.time() * 1000)
+    signal = {"id": str(uuid.uuid4()), "type": SIGNAL_TYPES[action], "data": {},
+              "sent_by": getattr(request.state, "user", None), "sent_at": sent_at}
+    if tables:
+        signal["data"]["data-collections"] = [f"{c.schema}.{t}" for t in dict.fromkeys(tables)]
+    if action == "snapshot":
+        signal["data"]["type"] = "incremental"
+    # Named so the files sort in the order they were sent, and written under a name Vectezium
+    # skips (a dot-file) before the rename, so it never reads one half-written.
+    name = f"{sent_at:013d}-{signal['id']}.json"
+    tmp = pending / f".{name}"
+    tmp.write_text(json.dumps(signal, indent=2))
+    os.replace(tmp, pending / name)
+    return {**signal, "name": name}
 
 
 # ------------------------------------------------------------------------------- licences

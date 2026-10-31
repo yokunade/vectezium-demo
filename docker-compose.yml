@@ -86,6 +86,7 @@ services:
       - ./vectezium/vectezium.yaml:/etc/vectezium/vectezium.yaml:ro
       - vectezium-data:/var/lib/vectezium    # offsets.json: where to resume
       - events:/var/log/vectezium            # live.ndjson, live_pg.ndjson: read by the UI
+      - signals:/signals                     # signal folders: requests from the UI and scripts
     secrets:
       - mysql-password
       - postgres-password
@@ -118,6 +119,9 @@ services:
     volumes:
       - ui-data:/data                 # auth.db: UI users and sessions
       - events:/events                # live.ndjson, live_pg.ndjson: read and trimmed in place
+      - signals:/signals              # Vectezium's signal folders: the Snapshots tab writes requests
+      # Vectezium's config, for the tables each connector captures (Snapshots tab).
+      - ./vectezium/vectezium.yaml:/config/vectezium.yaml:ro
       # The licence files, shown in the Licences tab.
       - ./LICENSE:/licences/LICENSE:ro
       - ./vectezium/NOTICE:/licences/NOTICE:ro
@@ -130,7 +134,8 @@ services:
       azurite:
         condition: service_started
 
-  # Used by scripts/snapshot.sh and scripts/lose-offsets.sh to edit Vectezium's offset file while it is stopped.
+  # Used by scripts/snapshot.sh (to send Vectezium signals, or edit its offset file while it is
+  # stopped) and scripts/lose-offsets.sh.
   tools:
     build: ./ui
     image: vectezium-demo/ui:local
@@ -138,6 +143,7 @@ services:
     user: "65532:65532"               # the owner of Vectezium's files
     volumes:
       - vectezium-data:/data
+      - signals:/signals
 
 secrets:
   mysql-password:
@@ -151,4 +157,5 @@ volumes:
   azurite-data:
   vectezium-data:
   events:
+  signals:
   ui-data:
