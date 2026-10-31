@@ -574,3 +574,6 @@ table.grid td.null { color: var(--faint); font-style: italic; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* The icon sprite: defines symbols, takes no space. */
+.sprite { position: absolute; }

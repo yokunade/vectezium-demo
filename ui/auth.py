@@ -32,7 +32,7 @@ SESSION_SECONDS = int(os.environ.get("SESSION_HOURS", 12)) * 3600
 MIN_PASSWORD = 8
 
 # Paths anyone may load: the sign-in page, its assets and the sign-in API itself.
-PUBLIC = ("/login", "/static/login.", "/api/auth/login", "/api/auth/state")
+PUBLIC = ("/login", "/static/login.", "/static/theme.js", "/api/auth/login", "/api/auth/state")
 
 router = APIRouter(prefix="/api/auth")
 _lock = threading.Lock()
@@ -113,19 +113,44 @@ def session_user(token):
 # ------------------------------------------------------------------------------- throttling
 
 # Failed sign-ins per client address: after MAX_FAILURES in WINDOW seconds, wait for the window.
-MAX_FAILURES, WINDOW = 5, 60
+# Sign-ins run on several threads, so the table has its own lock; it forgets addresses whose
+# failures are older than the window, and holds at most MAX_CLIENTS of them.
+MAX_FAILURES, WINDOW, MAX_CLIENTS = 5, 60, 10_000
 _failures = {}
+_failures_lock = threading.Lock()
+
+
+def _recent(client, now):
+    return [t for t in _failures.get(client, ()) if now - t < WINDOW]
 
 
 def _throttled(client):
     now = time.monotonic()
-    recent = [t for t in _failures.get(client, []) if now - t < WINDOW]
-    _failures[client] = recent
-    return len(recent) >= MAX_FAILURES
+    with _failures_lock:
+        recent = _recent(client, now)
+        if recent:
+            _failures[client] = recent
+        else:
+            _failures.pop(client, None)
+        return len(recent) >= MAX_FAILURES
 
 
 def _failed(client):
-    _failures.setdefault(client, []).append(time.monotonic())
+    now = time.monotonic()
+    with _failures_lock:
+        if len(_failures) >= MAX_CLIENTS:
+            for stale in [c for c in _failures if not _recent(c, now)]:
+                del _failures[stale]
+            if len(_failures) >= MAX_CLIENTS:
+                # Still full of active addresses: drop the one whose last failure is oldest.
+                del _failures[min(_failures, key=lambda c: _failures[c][-1])]
+        _failures.setdefault(client, []).append(now)
+        _failures[client] = _failures[client][-MAX_FAILURES:]
+
+
+def _succeeded(client):
+    with _failures_lock:
+        _failures.pop(client, None)
 
 
 # ------------------------------------------------------------------------------- API
@@ -155,7 +180,7 @@ def login(body: Login, request: Request, response: Response):
         if not check_password(body.password, user["password_hash"] if user else _DUMMY_HASH) or not user:
             _failed(client)
             raise HTTPException(401, "That username and password don't match.")
-        _failures.pop(client, None)
+        _succeeded(client)
         token = secrets.token_urlsafe(32)
         now = int(time.time())
         with _lock:

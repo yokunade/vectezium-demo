@@ -23,7 +23,6 @@ import ctypes
 import datetime
 import decimal
 import json
-import mmap
 import os
 import zlib
 from dataclasses import dataclass
@@ -99,10 +98,22 @@ lake = BlobServiceClient.from_connection_string(
     os.environ["AZURE_STORAGE_CONNECTION_STRING"]).get_container_client(CONTAINER)
 
 
+# Everything the UI loads comes from this server; no inline scripts or styles, no framing.
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; "
+                               "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+                               "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+
+
 @app.middleware("http")
-async def revalidate_static(request: Request, call_next):
-    """Browsers check /static/ files on every load, so a new UI never runs with a cached old app.js."""
+async def response_headers(request: Request, call_next):
+    """Security headers on every response. Browsers check /static/ files on every load, so a new
+    UI never runs with a cached old app.js."""
     response = await call_next(request)
+    response.headers.update(SECURITY_HEADERS)
     if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
     return response
@@ -265,15 +276,18 @@ def find_event(seq: str, connector: str = "mysql"):
     in the connector's live file."""
     needle = f'"seq":"{seq}"'.encode()
     try:
-        with open(live_files[get_connector(connector).id].path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
-            at = m.rfind(needle)
-            while at >= 0:
-                line_start = m.rfind(b"\n", 0, at) + 1
-                line_end = m.find(b"\n", at)
-                event = json.loads(m[line_start:line_end if line_end >= 0 else len(m)])
-                if "change_seq" not in event:
-                    return event
-                at = m.rfind(needle, 0, line_start)
+        # Read, not mmap: the trimmer shrinks the file in place, and touching a mapped page past
+        # the new end would kill the process (SIGBUS). The file is at most LIVE_MAX_BYTES.
+        with open(live_files[get_connector(connector).id].path, "rb") as f:
+            data = f.read()
+        at = data.rfind(needle)
+        while at >= 0:
+            line_start = data.rfind(b"\n", 0, at) + 1
+            line_end = data.find(b"\n", at)
+            event = json.loads(data[line_start:line_end if line_end >= 0 else len(data)])
+            if "change_seq" not in event:
+                return event
+            at = data.rfind(needle, 0, line_start)
     except (FileNotFoundError, ValueError):
         pass
     raise HTTPException(404, "no longer in the live file")

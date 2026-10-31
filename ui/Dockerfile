@@ -7,8 +7,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 # The UI's user store (auth.db) lives on the ui-data volume mounted here; a new named volume
-# takes this directory's owner, the UI's user.
+# takes this directory's owner, the UI's user. 65532 is also Vectezium's user, which owns the live
+# files the UI trims (the compose file runs the UI as the same user).
 RUN mkdir /data && chown 65532:65532 /data
-USER 10001:10001
+USER 65532:65532
 EXPOSE 8080
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "warning"]

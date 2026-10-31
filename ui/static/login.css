@@ -412,3 +412,6 @@ h2 { margin: 0; font-size: 26px; letter-spacing: -0.03em; font-weight: 700; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   .done-mark circle, .done-mark path { stroke-dashoffset: 0; }
 }
+
+/* The icon sprite: defines symbols, takes no space. */
+.sprite { position: absolute; }

@@ -23,7 +23,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root-demo-pw
     ports:
-      - "3307:3306"                   # for your own MySQL client: localhost:3307, user app
+      - "127.0.0.1:3307:3306"         # for your own MySQL client: localhost:3307, user app
     volumes:
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
       - mysql-data:/var/lib/mysql
@@ -47,7 +47,7 @@ services:
       POSTGRES_DB: shop
       POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
     ports:
-      - "5433:5432"                   # for your own client: localhost:5433, database shop, user app
+      - "127.0.0.1:5433:5432"         # for your own client: localhost:5433, database shop, user app
     volumes:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
       - postgres-data:/var/lib/postgresql
@@ -63,7 +63,7 @@ services:
     image: mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
     command: azurite-blob --blobHost 0.0.0.0 --location /data --loose --skipApiVersionCheck
     ports:
-      - "10000:10000"                 # for Azure Storage Explorer: "Local storage emulator"
+      - "127.0.0.1:10000:10000"       # for Azure Storage Explorer: "Local storage emulator"
     volumes:
       - azurite-data:/data
 
@@ -105,7 +105,8 @@ services:
     image: vectezium-demo/ui:local
     user: "65532:65532"               # the owner of live.ndjson, which the UI trims
     ports:
-      - "8080:8080"
+      # This machine only; UI_BIND=0.0.0.0 opens it to your network (plain HTTP, see README).
+      - "${UI_BIND:-127.0.0.1}:8080:8080"
     environment:
       AZURE_STORAGE_CONNECTION_STRING: *azurite-connection
       MYSQL_HOST: mysql

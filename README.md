@@ -309,9 +309,17 @@ for real, change these demo settings:
 | `docs/` | The screenshot above |
 | `LICENSE` | The Mozilla Public License 2.0 |
 
-All passwords in this repository are demo values for local containers. The UI's sign-in keeps
-the demo off-limits to other people on your network, but it serves plain HTTP: put it behind
-TLS before exposing it anywhere else.
+All passwords in this repository are demo values for local containers. Everything the demo
+publishes (the UI on 8080, MySQL on 3307, PostgreSQL on 5433, Azurite on 10000) listens on
+`127.0.0.1` only, so other machines on your network cannot reach it. To open the UI to your
+network, start it with `UI_BIND=0.0.0.0 docker compose up -d`: its sign-in then keeps others out,
+but it serves plain HTTP, so put it behind TLS before exposing it anywhere else. The databases and
+Azurite stay local either way.
+
+Vectezium's MySQL user can read only the `shop` database, plus the server-wide replication
+privileges it needs ([`mysql/init/01-users.sql`](mysql/init/01-users.sql)). The init scripts run
+only when a database volume is first created, so a demo set up before this change keeps its old
+grants until `./scripts/reset.sh`.
 
 ## Licence
 
