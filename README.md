@@ -205,8 +205,10 @@ A row change looks like this (`record_images: before_and_after`):
 event has the row's key in `record.after`. Files written before this format have the row in
 `record` and the previous one in a top-level `before`.
 
-Apply changes in `metadata.seq` order: it is one sequence across all tables, and replayed events
-keep the same `seq`. `customers.password_hash` never leaves MySQL because of
+Apply changes in `metadata.seq` order: it is one sequence across all tables, and replayed changes
+keep the same `seq`. Snapshot reads (op `r`) may not, so never deduplicate them on `seq` alone:
+use `seq`, `snapshot_id` and the key together (see *Duplicates* in the fork's
+[`contrib/mysql_cdc/README.md`](https://github.com/yokunade/Vectezium/blob/vectezium/contrib/mysql_cdc/README.md)). `customers.password_hash` never leaves MySQL because of
 `column_exclude_list`. Compare the **MySQL** tab with a row file in the **Lake** tab.
 
 You can also browse the lake with [Azure Storage Explorer](https://azure.microsoft.com/products/storage/storage-explorer):
