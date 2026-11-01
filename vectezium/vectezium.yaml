@@ -211,6 +211,8 @@ sinks:
     blob_time_format: ""
     blob_append_uuid: false
     blob_overwrite: true
+    # Never replace a newer offset with an older one (a timed-out request that lands late).
+    blob_overwrite_order_by: ["seq", "committed_at"]
     blob_extension: json
     encoding:
       codec: json
@@ -321,6 +323,8 @@ sinks:
     blob_time_format: ""
     blob_append_uuid: false
     blob_overwrite: true
+    # Never replace a newer offset with an older one (a timed-out request that lands late).
+    blob_overwrite_order_by: ["seq", "committed_at"]
     blob_extension: json
     encoding:
       codec: json

@@ -8,7 +8,7 @@
 # jemalloc) plus the file sink, which the demo uses to feed the live view in the UI.
 
 ARG VECTEZIUM_REPO=https://github.com/yokunade/Vectezium.git
-ARG VECTEZIUM_COMMIT=1c7fdaa37ea29044f32129f89bebff44a4ed5800
+ARG VECTEZIUM_COMMIT=c5e6c8a92e6573f3e0cacd30450d9a8a55f41515
 
 FROM rust:1.96.1-trixie@sha256:1f0dbad1df66647807e6952d1db85d0b2bda7606cb2139d82517e4f009967376 AS build
 RUN apt-get update \
